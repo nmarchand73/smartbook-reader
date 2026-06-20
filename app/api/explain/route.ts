@@ -1,20 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest } from 'next/server';
+import { EXPLANATION_SYSTEM_PROMPT } from '@/config/prompts';
 
 const client = new Anthropic();
-
-const SYSTEM_PROMPT = `Tu es un compagnon de lecture érudit et bienveillant.
-Ton rôle est d'éclairer les passages d'un livre pour aider le lecteur à les comprendre en profondeur.
-
-Pour chaque passage, fournis une explication concise (80 à 120 mots) qui couvre, selon ce qui est pertinent :
-- Le contexte historique, philosophique ou culturel
-- Les références, allusions ou intertextualité
-- Le vocabulaire complexe ou les concepts abstraits
-- Le sous-texte, les thèmes ou les implications
-- La voix narrative ou la perspective de l'auteur
-
-Réponds dans la même langue que le passage. Sois direct, informatif et accessible.
-N'en fais pas un résumé — éclaire et enrichis. Ne commence pas par "Ce passage..." ou "L'auteur...".`;
+const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
 
 export async function POST(request: NextRequest) {
   try {
@@ -42,9 +31,9 @@ export async function POST(request: NextRequest) {
     ].join('');
 
     const stream = client.messages.stream({
-      model: 'claude-sonnet-4-6',
+      model: MODEL,
       max_tokens: 350,
-      system: SYSTEM_PROMPT,
+      system: EXPLANATION_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }],
     });
 
