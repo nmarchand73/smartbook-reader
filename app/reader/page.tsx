@@ -20,7 +20,7 @@ import type { Paragraph } from '@/lib/epub-parser';
 const PARAGRAPHS_PER_PAGE = 5;
 const FONT_SIZE_STORAGE_KEY = 'sbr_reader_font_size';
 const DEFAULT_BOOK_FONT_SIZE = 16;
-const MIN_BOOK_FONT_SIZE = 12;
+const MIN_BOOK_FONT_SIZE = 8;
 const MAX_BOOK_FONT_SIZE = 24;
 const BOOK_FONT_SIZE_STEP = 1;
 const SPLIT_STORAGE_KEY = 'sbr_reader_split_percent';
@@ -676,7 +676,7 @@ export default function ReaderPage() {
               <div
                 role="dialog"
                 aria-label="Sommaire du livre"
-                className="fixed left-3 right-3 top-24 z-40 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:w-[22rem]"
+                className="fixed left-3 right-3 top-24 z-40 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:w-[26rem]"
               >
                 <div className="border-b border-stone-100 px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
@@ -723,12 +723,17 @@ export default function ReaderPage() {
                           {index + 1}
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">{chapter.title}</span>
-                          {readingMode === 'pages' && (
-                            <span className="mt-0.5 block text-xs text-stone-400">
-                              Page {chapterPage}
-                            </span>
-                          )}
+                          <span className="block text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-400">
+                            Chapitre {index + 1}
+                          </span>
+                          <span className="mt-0.5 block text-sm font-medium leading-snug">
+                            {chapter.title}
+                          </span>
+                          <span className="mt-1 block text-xs text-stone-400">
+                            {readingMode === 'pages'
+                              ? `Page ${chapterPage}`
+                              : `Début au paragraphe ${chapter.firstIndex + 1}`}
+                          </span>
                         </span>
                       </button>
                     );

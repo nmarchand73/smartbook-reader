@@ -6,9 +6,25 @@ const client = new Anthropic();
 const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
 const MAX_OUTPUT_TOKENS = 900;
 
+async function parseRequestBody(request: NextRequest): Promise<{
+  passage?: string;
+  bookTitle?: string;
+  author?: string;
+} | null> {
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await parseRequestBody(request);
+    if (!body) {
+      return Response.json({ error: 'Corps JSON manquant ou invalide.' }, { status: 400 });
+    }
+
     const { passage, bookTitle, author } = body as {
       passage?: string;
       bookTitle?: string;
