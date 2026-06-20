@@ -218,6 +218,7 @@ export default function ReaderPage() {
   const [splitPercent, setSplitPercent] = useState(DEFAULT_SPLIT_PERCENT);
   const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [anthropicModel, setAnthropicModel] = useState(DEFAULT_ANTHROPIC_MODEL);
+  const [areAiSettingsLoaded, setAreAiSettingsLoaded] = useState(false);
   const [isResizingSplit, setIsResizingSplit] = useState(false);
   const [readingMode, setReadingMode] = useState<ReadingMode>('pages');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -312,6 +313,8 @@ export default function ReaderPage() {
       setAnthropicModel(localStorage.getItem(ANTHROPIC_MODEL_STORAGE_KEY) ?? DEFAULT_ANTHROPIC_MODEL);
     } catch {
       // Keep empty/default AI settings when localStorage is unavailable.
+    } finally {
+      setAreAiSettingsLoaded(true);
     }
   }, []);
 
@@ -1009,6 +1012,23 @@ export default function ReaderPage() {
       {cacheClearMessage && (
         <div className="flex-none border-b border-violet-100 bg-violet-50 px-5 py-2 text-xs font-medium text-violet-700">
           {cacheClearMessage}
+        </div>
+      )}
+      {areAiSettingsLoaded && !anthropicApiKey.trim() && (
+        <div className="flex flex-none items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-2 text-xs text-amber-800">
+          <span>
+            IA non configurée dans ce navigateur. Renseignez une clé Anthropic locale dans les réglages.
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSettingsOpen(true);
+              setIsTocOpen(false);
+            }}
+            className="flex-none rounded-full bg-white px-3 py-1 font-medium text-amber-900 shadow-sm transition-colors hover:bg-amber-100"
+          >
+            Ouvrir les réglages
+          </button>
         </div>
       )}
 
