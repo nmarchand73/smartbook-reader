@@ -28,3 +28,18 @@ export function setCachedExplanation(bookTitle: string, text: string, explanatio
     // Quota exceeded — silently skip caching
   }
 }
+
+export function clearExplanationCache(): number {
+  try {
+    const keysToDelete: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const storageKey = localStorage.key(i);
+      if (storageKey?.startsWith(PREFIX)) keysToDelete.push(storageKey);
+    }
+
+    keysToDelete.forEach(storageKey => localStorage.removeItem(storageKey));
+    return keysToDelete.length;
+  } catch {
+    return 0;
+  }
+}

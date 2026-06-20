@@ -1,21 +1,57 @@
 'use client';
 
-import { useEffect, useRef, useCallback, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  Fragment,
+  useCallback,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent,
+} from 'react';
+import ReactMarkdown from 'react-markdown';
 import { useRouter } from 'next/navigation';
 import { useEpub } from '@/context/EpubContext';
-import { getCachedExplanation, setCachedExplanation } from '@/lib/cache';
+import { clearExplanationCache, getCachedExplanation, setCachedExplanation } from '@/lib/cache';
 import type { Paragraph } from '@/lib/epub-parser';
 
 const PARAGRAPHS_PER_PAGE = 5;
 const FONT_SIZE_STORAGE_KEY = 'sbr_reader_font_size';
-const DEFAULT_BOOK_FONT_SIZE = 18;
-const MIN_BOOK_FONT_SIZE = 15;
+const DEFAULT_BOOK_FONT_SIZE = 16;
+const MIN_BOOK_FONT_SIZE = 12;
 const MAX_BOOK_FONT_SIZE = 24;
 const BOOK_FONT_SIZE_STEP = 1;
 const SPLIT_STORAGE_KEY = 'sbr_reader_split_percent';
 const DEFAULT_SPLIT_PERCENT = 42;
 const MIN_SPLIT_PERCENT = 28;
 const MAX_SPLIT_PERCENT = 64;
+const READING_MODE_STORAGE_KEY = 'sbr_reader_mode';
+
+type ReadingMode = 'pages' | 'scroll';
+interface ChapterOption {
+  title: string;
+  firstIndex: number;
+}
+interface SelectedPassage {
+  text: string;
+  label: string;
+  paragraphIndex: number | null;
+  paragraphIndexes: number[];
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getPageIndexForParagraph(pages: Paragraph[][], paragraphIndex: number): number {
+  const pageIndex = pages.findIndex(page =>
+    page.some(paragraph => paragraph.globalIndex === paragraphIndex)
+  );
+
+  return pageIndex >= 0 ? pageIndex : 0;
+}
 
 // ── Streaming fetch helper ────────────────────────────────────────────────────
 
@@ -49,6 +85,12 @@ async function fetchExplanation(
     onChunk(full);
   }
 
+  const finalChunk = decoder.decode();
+  if (finalChunk) {
+    full += finalChunk;
+    onChunk(full);
+  }
+
   return full;
 }
 
@@ -75,14 +117,27 @@ export default function ReaderPage() {
 
   const [explanation, setExplanation] = useState<string | null>(null);
   const [explainedParagraphIndex, setExplainedParagraphIndex] = useState<number | null>(null);
+  const [selectedParagraphIndex, setSelectedParagraphIndex] = useState<number | null>(null);
+  const [selectedParagraphIndexes, setSelectedParagraphIndexes] = useState<number[]>([]);
+  const [selectionAnchorIndex, setSelectionAnchorIndex] = useState<number | null>(null);
+  const [selectedPassage, setSelectedPassage] = useState<SelectedPassage | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bookFontSize, setBookFontSize] = useState(DEFAULT_BOOK_FONT_SIZE);
   const [splitPercent, setSplitPercent] = useState(DEFAULT_SPLIT_PERCENT);
   const [isResizingSplit, setIsResizingSplit] = useState(false);
+  const [readingMode, setReadingMode] = useState<ReadingMode>('pages');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isTocOpen, setIsTocOpen] = useState(false);
+  const [cacheClearMessage, setCacheClearMessage] = useState<string | null>(null);
+  const [paginatedPages, setPaginatedPages] = useState<Paragraph[][]>([]);
+  const [paginationLayoutVersion, setPaginationLayoutVersion] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
+  const bookPaneRef = useRef<HTMLElement | null>(null);
+  const paginationMeasureRef = useRef<HTMLDivElement | null>(null);
+  const previousReadingModeRef = useRef<ReadingMode>('pages');
 
   // Redirect to upload if no epub is loaded
   useEffect(() => {
@@ -103,15 +158,16 @@ export default function ReaderPage() {
       const parsedFontSize = Number(storedFontSize);
       if (!Number.isFinite(parsedFontSize)) return;
 
-      setBookFontSize(Math.min(MAX_BOOK_FONT_SIZE, Math.max(MIN_BOOK_FONT_SIZE, parsedFontSize)));
+      setBookFontSize(clampNumber(parsedFontSize, MIN_BOOK_FONT_SIZE, MAX_BOOK_FONT_SIZE));
     } catch {
       // Keep the default size when localStorage is unavailable.
     }
   }, []);
 
   const updateBookFontSize = useCallback((nextSize: number) => {
-    const clampedSize = Math.min(MAX_BOOK_FONT_SIZE, Math.max(MIN_BOOK_FONT_SIZE, nextSize));
+    const clampedSize = clampNumber(nextSize, MIN_BOOK_FONT_SIZE, MAX_BOOK_FONT_SIZE);
     setBookFontSize(clampedSize);
+    setPaginationLayoutVersion(version => version + 1);
 
     try {
       localStorage.setItem(FONT_SIZE_STORAGE_KEY, clampedSize.toString());
@@ -128,15 +184,16 @@ export default function ReaderPage() {
       const parsedSplitPercent = Number(storedSplitPercent);
       if (!Number.isFinite(parsedSplitPercent)) return;
 
-      setSplitPercent(Math.min(MAX_SPLIT_PERCENT, Math.max(MIN_SPLIT_PERCENT, parsedSplitPercent)));
+      setSplitPercent(clampNumber(parsedSplitPercent, MIN_SPLIT_PERCENT, MAX_SPLIT_PERCENT));
     } catch {
       // Keep the default split when localStorage is unavailable.
     }
   }, []);
 
   const updateSplitPercent = useCallback((nextPercent: number) => {
-    const clampedPercent = Math.min(MAX_SPLIT_PERCENT, Math.max(MIN_SPLIT_PERCENT, nextPercent));
+    const clampedPercent = clampNumber(nextPercent, MIN_SPLIT_PERCENT, MAX_SPLIT_PERCENT);
     setSplitPercent(clampedPercent);
+    setPaginationLayoutVersion(version => version + 1);
 
     try {
       localStorage.setItem(SPLIT_STORAGE_KEY, clampedPercent.toString());
@@ -145,13 +202,55 @@ export default function ReaderPage() {
     }
   }, []);
 
+  useEffect(() => {
+    try {
+      const storedReadingMode = localStorage.getItem(READING_MODE_STORAGE_KEY);
+      if (storedReadingMode === 'pages' || storedReadingMode === 'scroll') {
+        setReadingMode(storedReadingMode);
+      }
+    } catch {
+      // Keep the default mode when localStorage is unavailable.
+    }
+  }, []);
+
+  const updateReadingMode = useCallback((nextMode: ReadingMode) => {
+    setReadingMode(nextMode);
+
+    try {
+      localStorage.setItem(READING_MODE_STORAGE_KEY, nextMode);
+    } catch {
+      // Reading mode still updates for the current session.
+    }
+  }, []);
+
   const handleSplitResizeStart = useCallback((event: PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     setIsResizingSplit(true);
   }, []);
 
+  const updateCurrentParagraphFromScroll = useCallback(() => {
+    if (readingMode !== 'scroll') return;
+
+    const bookPane = bookPaneRef.current;
+    if (!bookPane) return;
+
+    const paneBounds = bookPane.getBoundingClientRect();
+    const paragraphElements = Array.from(
+      bookPane.querySelectorAll<HTMLElement>('[data-paragraph-index]')
+    );
+    const currentParagraph = paragraphElements.find(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.bottom >= paneBounds.top + 120;
+    }) ?? paragraphElements[paragraphElements.length - 1];
+
+    const paragraphIndex = Number(currentParagraph?.dataset.paragraphIndex);
+    if (Number.isFinite(paragraphIndex) && paragraphIndex !== currentIndex) {
+      navigate(paragraphIndex);
+    }
+  }, [currentIndex, navigate, readingMode]);
+
   const handleSplitKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLButtonElement>) => {
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
         updateSplitPercent(splitPercent - 2);
@@ -190,12 +289,71 @@ export default function ReaderPage() {
     };
   }, [isResizingSplit, updateSplitPercent]);
 
+  useEffect(() => {
+    const bookPane = bookPaneRef.current;
+    if (!bookPane) return;
+
+    const observer = new ResizeObserver(() => {
+      setPaginationLayoutVersion(version => version + 1);
+    });
+
+    observer.observe(bookPane);
+    return () => observer.disconnect();
+  }, [readingMode]);
+
+  useLayoutEffect(() => {
+    if (!epub) return;
+
+    const animationFrame = requestAnimationFrame(() => {
+      const bookPane = bookPaneRef.current;
+      const measureRoot = paginationMeasureRef.current;
+      if (!bookPane || !measureRoot) return;
+
+      const measureContent = measureRoot.querySelector<HTMLElement>('[data-pagination-measure-content]');
+      if (!measureContent) return;
+
+      const paneBounds = bookPane.getBoundingClientRect();
+      const contentBounds = measureContent.getBoundingClientRect();
+      const availableHeight = Math.max(240, paneBounds.bottom - contentBounds.top - 80);
+      const nextPages: Paragraph[][] = [];
+      let currentPage: Paragraph[] = [];
+      let currentHeight = 0;
+
+      epub.paragraphs.forEach(paragraph => {
+        const measuredElement = measureRoot.querySelector<HTMLElement>(
+          `[data-measure-paragraph-index="${paragraph.globalIndex}"]`
+        );
+        const measuredHeight = measuredElement?.getBoundingClientRect().height ?? 0;
+        const paragraphHeight = Math.max(1, measuredHeight);
+
+        if (currentPage.length > 0 && currentHeight + paragraphHeight > availableHeight) {
+          nextPages.push(currentPage);
+          currentPage = [];
+          currentHeight = 0;
+        }
+
+        currentPage.push(paragraph);
+        currentHeight += paragraphHeight;
+      });
+
+      if (currentPage.length > 0) nextPages.push(currentPage);
+      setPaginatedPages(nextPages.length > 0 ? nextPages : [epub.paragraphs]);
+    });
+
+    return () => cancelAnimationFrame(animationFrame);
+  }, [bookFontSize, epub, paginationLayoutVersion, splitPercent]);
+
   const loadExplanation = useCallback(
-    async (paragraph: Paragraph, epubTitle: string, epubAuthor: string) => {
-      setExplainedParagraphIndex(paragraph.globalIndex);
+    async (
+      passageText: string,
+      epubTitle: string,
+      epubAuthor: string,
+      paragraphIndex: number | null
+    ) => {
+      setExplainedParagraphIndex(paragraphIndex);
 
       // Check cache first
-      const cached = getCachedExplanation(epubTitle, paragraph.text);
+      const cached = getCachedExplanation(epubTitle, passageText);
       if (cached) {
         setExplanation(cached);
         setIsLoading(false);
@@ -214,7 +372,7 @@ export default function ReaderPage() {
 
       try {
         const full = await fetchExplanation(
-          paragraph.text,
+          passageText,
           epubTitle,
           epubAuthor,
           text => {
@@ -222,7 +380,7 @@ export default function ReaderPage() {
           },
           controller.signal
         );
-        setCachedExplanation(epubTitle, paragraph.text, full);
+        setCachedExplanation(epubTitle, passageText, full);
         setIsLoading(false);
       } catch (e) {
         if ((e as Error).name === 'AbortError') return;
@@ -235,28 +393,157 @@ export default function ReaderPage() {
 
   const resetExplanation = useCallback(() => {
     abortRef.current?.abort();
+    setSelectedParagraphIndex(null);
+    setSelectedParagraphIndexes([]);
+    setSelectionAnchorIndex(null);
+    setSelectedPassage(null);
     setExplanation(null);
     setExplainedParagraphIndex(null);
     setIsLoading(false);
     setLoadError(null);
   }, []);
 
-  const selectParagraph = useCallback(
-    (index: number) => {
-      navigate(index);
-      if (explainedParagraphIndex !== index) resetExplanation();
+  const buildParagraphPassage = useCallback(
+    (indexes: number[]): SelectedPassage | null => {
+      if (!epub || indexes.length === 0) return null;
+
+      const sortedIndexes = Array.from(new Set(indexes)).sort((a, b) => a - b);
+      const selectedParagraphs = sortedIndexes
+        .map(index => epub.paragraphs[index])
+        .filter((paragraph): paragraph is Paragraph => Boolean(paragraph));
+
+      if (selectedParagraphs.length === 0) return null;
+
+      return {
+        text: selectedParagraphs.map(paragraph => paragraph.text).join('\n\n'),
+        label: selectedParagraphs.length > 1
+          ? `${selectedParagraphs.length} paragraphes sélectionnés`
+          : 'Paragraphe sélectionné',
+        paragraphIndex: selectedParagraphs.length === 1 ? selectedParagraphs[0].globalIndex : null,
+        paragraphIndexes: selectedParagraphs.map(paragraph => paragraph.globalIndex),
+      };
     },
-    [explainedParagraphIndex, navigate, resetExplanation]
+    [epub]
+  );
+
+  const handleClearCache = useCallback(() => {
+    const deletedCount = clearExplanationCache();
+    resetExplanation();
+    setIsSettingsOpen(false);
+    setCacheClearMessage(
+      deletedCount > 0
+        ? `${deletedCount} explication${deletedCount > 1 ? 's' : ''} supprimée${deletedCount > 1 ? 's' : ''}.`
+        : 'Le cache était déjà vide.'
+    );
+  }, [resetExplanation]);
+
+  useEffect(() => {
+    if (!cacheClearMessage) return;
+
+    const timeout = window.setTimeout(() => setCacheClearMessage(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [cacheClearMessage]);
+
+  const selectParagraph = useCallback(
+    (
+      index: number,
+      options: { additive?: boolean; range?: boolean } = {}
+    ) => {
+      if (!epub?.paragraphs[index]) return;
+
+      let nextIndexes: number[];
+      if (options.range && selectionAnchorIndex !== null) {
+        const start = Math.min(selectionAnchorIndex, index);
+        const end = Math.max(selectionAnchorIndex, index);
+        nextIndexes = Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
+      } else if (options.additive) {
+        nextIndexes = selectedParagraphIndexes.includes(index)
+          ? selectedParagraphIndexes.filter(selectedIndex => selectedIndex !== index)
+          : [...selectedParagraphIndexes, index];
+      } else {
+        nextIndexes = [index];
+      }
+
+      if (nextIndexes.length === 0) {
+        resetExplanation();
+        return;
+      }
+
+      const nextPassage = buildParagraphPassage(nextIndexes);
+      if (!nextPassage) return;
+
+      abortRef.current?.abort();
+      setExplanation(null);
+      setExplainedParagraphIndex(null);
+      setIsLoading(false);
+      setLoadError(null);
+      setSelectedParagraphIndexes(Array.from(new Set(nextIndexes)).sort((a, b) => a - b));
+      setSelectedParagraphIndex(nextPassage.paragraphIndex);
+      setSelectedPassage(nextPassage);
+      setSelectionAnchorIndex(index);
+      navigate(index);
+    },
+    [buildParagraphPassage, epub, navigate, selectedParagraphIndexes, selectionAnchorIndex]
+  );
+
+  const explainPassage = useCallback(
+    (passage: SelectedPassage) => {
+      if (!epub) return;
+
+      setSelectedPassage(passage);
+      setSelectedParagraphIndex(passage.paragraphIndex);
+      setSelectedParagraphIndexes(passage.paragraphIndexes);
+      setSelectionAnchorIndex(passage.paragraphIndexes[passage.paragraphIndexes.length - 1] ?? null);
+      if (passage.paragraphIndex !== null) navigate(passage.paragraphIndex);
+      loadExplanation(passage.text, epub.title, epub.author, passage.paragraphIndex);
+    },
+    [epub, loadExplanation, navigate]
   );
 
   const explainParagraph = useCallback(
     (paragraph: Paragraph) => {
-      if (!epub) return;
-      navigate(paragraph.globalIndex);
-      loadExplanation(paragraph, epub.title, epub.author);
+      explainPassage({
+        text: paragraph.text,
+        label: 'Paragraphe sélectionné',
+        paragraphIndex: paragraph.globalIndex,
+        paragraphIndexes: [paragraph.globalIndex],
+      });
     },
-    [epub, loadExplanation, navigate]
+    [explainPassage]
   );
+
+  const captureTextSelection = useCallback(() => {
+    requestAnimationFrame(() => {
+      const selection = window.getSelection();
+      const selectedText = selection?.toString().replace(/\s+/g, ' ').trim() ?? '';
+      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      const bookPane = bookPaneRef.current;
+
+      if (!selection || selection.isCollapsed || selectedText.length < 2 || !range || !bookPane) return;
+
+      const selectionNode = range.commonAncestorContainer;
+      const selectionElement = selectionNode.nodeType === Node.ELEMENT_NODE
+        ? selectionNode
+        : selectionNode.parentElement;
+
+      if (!(selectionElement instanceof Element) || !bookPane.contains(selectionElement)) return;
+
+      abortRef.current?.abort();
+      setSelectedParagraphIndex(null);
+      setSelectedParagraphIndexes([]);
+      setSelectionAnchorIndex(null);
+      setSelectedPassage({
+        text: selectedText,
+        label: 'Sélection libre',
+        paragraphIndex: null,
+        paragraphIndexes: [],
+      });
+      setExplanation(null);
+      setExplainedParagraphIndex(null);
+      setIsLoading(false);
+      setLoadError(null);
+    });
+  }, []);
 
   // Cancel in-flight generation when leaving the reader
   useEffect(() => {
@@ -267,21 +554,44 @@ export default function ReaderPage() {
 
   // Keyboard navigation
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const pageStart = Math.floor(currentIndex / PARAGRAPHS_PER_PAGE) * PARAGRAPHS_PER_PAGE;
+    const handler = (e: globalThis.KeyboardEvent) => {
+      if (readingMode !== 'pages') return;
+
+      const currentPageIndex = getPageIndexForParagraph(paginatedPages, currentIndex);
 
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        const nextPage = paginatedPages[currentPageIndex + 1];
+        if (!nextPage) return;
+
         resetExplanation();
-        navigate(pageStart + PARAGRAPHS_PER_PAGE);
+        navigate(nextPage[0].globalIndex);
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        const previousPage = paginatedPages[currentPageIndex - 1];
+        if (!previousPage) return;
+
         resetExplanation();
-        navigate(pageStart - PARAGRAPHS_PER_PAGE);
+        navigate(previousPage[0].globalIndex);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentIndex, navigate, resetExplanation]);
+  }, [currentIndex, navigate, paginatedPages, readingMode, resetExplanation]);
+
+  useEffect(() => {
+    const previousReadingMode = previousReadingModeRef.current;
+    previousReadingModeRef.current = readingMode;
+
+    if (readingMode !== 'scroll' || previousReadingMode === 'scroll') return;
+
+    const animationFrame = requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-paragraph-index="${currentIndex}"]`)
+        ?.scrollIntoView({ block: 'center' });
+    });
+
+    return () => cancelAnimationFrame(animationFrame);
+  }, [currentIndex, readingMode]);
 
   if (!epub) {
     return (
@@ -291,24 +601,54 @@ export default function ReaderPage() {
     );
   }
 
-  const currentPage = Math.floor(currentIndex / PARAGRAPHS_PER_PAGE);
-  const pageStartIndex = currentPage * PARAGRAPHS_PER_PAGE;
-  const pageParagraphs = epub.paragraphs.slice(pageStartIndex, pageStartIndex + PARAGRAPHS_PER_PAGE);
-  const paragraph = epub.paragraphs[currentIndex];
-  const total = epub.paragraphs.length;
-  const totalPages = Math.ceil(total / PARAGRAPHS_PER_PAGE);
+  const fallbackPages = [epub.paragraphs.slice(0, PARAGRAPHS_PER_PAGE)];
+  const pages = paginatedPages.length > 0 ? paginatedPages : fallbackPages;
+  const currentPage = getPageIndexForParagraph(pages, currentIndex);
+  const pageParagraphs = pages[currentPage] ?? pages[0] ?? [];
+  const displayedParagraphs = readingMode === 'pages' ? pageParagraphs : epub.paragraphs;
+  const currentParagraph = epub.paragraphs[currentIndex];
+  const chapterOptions = epub.paragraphs.reduce<ChapterOption[]>((chapters, item) => {
+    const previousChapter = chapters[chapters.length - 1];
+    if (previousChapter?.title === item.chapterTitle) return chapters;
+
+    chapters.push({
+      title: item.chapterTitle,
+      firstIndex: item.globalIndex,
+    });
+    return chapters;
+  }, []);
+  const currentChapterStartIndex = [...chapterOptions]
+    .reverse()
+    .find(chapter => chapter.firstIndex <= currentIndex)?.firstIndex ?? chapterOptions[0]?.firstIndex ?? 0;
+  const totalPages = pages.length;
   const isFirst = currentPage === 0;
   const isLast = currentPage === totalPages - 1;
   const pageChapterTitles = Array.from(new Set(pageParagraphs.map(item => item.chapterTitle)));
   const chapterLabel = pageChapterTitles.length > 1
     ? `${pageChapterTitles[0]} - ${pageChapterTitles[pageChapterTitles.length - 1]}`
     : pageChapterTitles[0];
+  const headerChapterLabel = readingMode === 'pages' ? chapterLabel : currentParagraph?.chapterTitle;
+  const bookHeaderLabel = readingMode === 'pages' ? chapterLabel : 'Lecture continue';
+
+  const jumpToParagraph = (index: number) => {
+    resetExplanation();
+    setIsTocOpen(false);
+    navigate(index);
+
+    if (readingMode === 'scroll') {
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-paragraph-index="${index}"]`)
+          ?.scrollIntoView({ block: 'start' });
+      });
+    }
+  };
 
   return (
     <div className="flex flex-col h-screen bg-stone-50 overflow-hidden">
       {/* ── Header ── */}
-      <header className="flex-none flex items-center justify-between gap-4 px-5 py-3 bg-white border-b border-slate-200 shadow-sm">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="flex-none flex flex-col gap-3 px-4 py-3 bg-white border-b border-slate-200 shadow-sm md:flex-row md:items-center md:justify-between md:px-5">
+        <div className="flex min-w-0 items-center gap-3">
           <span className="text-xl">📖</span>
           <div className="min-w-0">
             <h1 className="font-semibold text-slate-900 truncate leading-tight">
@@ -317,7 +657,115 @@ export default function ReaderPage() {
             <p className="text-xs text-slate-400 truncate">{epub.author}</p>
           </div>
         </div>
-        <div className="flex flex-none items-center gap-3">
+        <div className="flex w-full flex-none items-center gap-2 overflow-x-auto pb-1 md:w-auto md:gap-3 md:overflow-visible md:pb-0">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                setIsTocOpen(isOpen => !isOpen);
+                setIsSettingsOpen(false);
+              }}
+              className="flex max-w-64 items-center gap-2 rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-600 shadow-sm transition-colors hover:bg-white hover:text-stone-800"
+              aria-expanded={isTocOpen}
+              aria-haspopup="dialog"
+            >
+              <span className="text-stone-400">Sommaire</span>
+              <span className="truncate text-stone-800">{headerChapterLabel}</span>
+            </button>
+            {isTocOpen && (
+              <div
+                role="dialog"
+                aria-label="Sommaire du livre"
+                className="fixed left-3 right-3 top-24 z-40 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:w-[22rem]"
+              >
+                <div className="border-b border-stone-100 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-stone-900">Sommaire</p>
+                      <p className="text-xs text-stone-400">
+                        {chapterOptions.length} chapitre{chapterOptions.length > 1 ? 's' : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsTocOpen(false)}
+                      className="rounded-full px-2 py-1 text-xs font-medium text-stone-400 transition-colors hover:bg-stone-50 hover:text-stone-700"
+                    >
+                      Fermer
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-[min(70vh,30rem)] overflow-y-auto p-2">
+                  {chapterOptions.map((chapter, index) => {
+                    const isCurrentChapter = chapter.firstIndex === currentChapterStartIndex;
+                    const chapterPage = getPageIndexForParagraph(pages, chapter.firstIndex) + 1;
+
+                    return (
+                      <button
+                        key={chapter.firstIndex}
+                        type="button"
+                        onClick={() => jumpToParagraph(chapter.firstIndex)}
+                        className={[
+                          'flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors',
+                          isCurrentChapter
+                            ? 'bg-violet-50 text-violet-900'
+                            : 'text-stone-700 hover:bg-stone-50',
+                        ].join(' ')}
+                      >
+                        <span
+                          className={[
+                            'mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full text-[11px] font-semibold',
+                            isCurrentChapter
+                              ? 'bg-violet-600 text-white'
+                              : 'bg-stone-100 text-stone-400',
+                          ].join(' ')}
+                        >
+                          {index + 1}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{chapter.title}</span>
+                          {readingMode === 'pages' && (
+                            <span className="mt-0.5 block text-xs text-stone-400">
+                              Page {chapterPage}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+          <div
+            className="flex items-center rounded-full border border-stone-200 bg-stone-50 p-1 text-xs font-medium shadow-sm"
+            aria-label="Mode de lecture"
+          >
+            <button
+              type="button"
+              onClick={() => updateReadingMode('pages')}
+              className={[
+                'rounded-full px-3 py-1 transition-colors',
+                readingMode === 'pages'
+                  ? 'bg-white text-violet-700 shadow-sm'
+                  : 'text-stone-500 hover:bg-white/70',
+              ].join(' ')}
+            >
+              Pages
+            </button>
+            <button
+              type="button"
+              onClick={() => updateReadingMode('scroll')}
+              className={[
+                'rounded-full px-3 py-1 transition-colors',
+                readingMode === 'scroll'
+                  ? 'bg-white text-violet-700 shadow-sm'
+                  : 'text-stone-500 hover:bg-white/70',
+              ].join(' ')}
+            >
+              Scroll
+            </button>
+          </div>
           <div
             className="flex items-center rounded-full border border-stone-200 bg-stone-50 p-1 shadow-sm"
             aria-label="Réglage de la taille du texte"
@@ -344,6 +792,35 @@ export default function ReaderPage() {
               A+
             </button>
           </div>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen(isOpen => !isOpen)}
+              className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-500 shadow-sm transition-colors hover:bg-white hover:text-stone-700"
+              aria-expanded={isSettingsOpen}
+              aria-haspopup="menu"
+            >
+              Réglages
+            </button>
+            {isSettingsOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 z-30 mt-2 w-64 rounded-2xl border border-stone-200 bg-white p-2 text-sm shadow-xl"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={handleClearCache}
+                  className="w-full rounded-xl px-3 py-2 text-left text-stone-700 transition-colors hover:bg-stone-50"
+                >
+                  <span className="block font-medium">Vider le cache des explications</span>
+                  <span className="mt-0.5 block text-xs leading-relaxed text-stone-400">
+                    Les commentaires IA seront régénérés à la demande.
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
           <button
             onClick={() => router.push('/')}
             className="text-xs text-slate-400 hover:text-slate-700 transition-colors whitespace-nowrap"
@@ -354,9 +831,14 @@ export default function ReaderPage() {
       </header>
 
       {/* ── Chapter label ── */}
-      {chapterLabel && (
+      {headerChapterLabel && (
         <div className="flex-none px-5 py-2 bg-stone-100 border-b border-stone-200 text-xs text-stone-500 font-medium uppercase tracking-wide">
-          {chapterLabel}
+          {headerChapterLabel}
+        </div>
+      )}
+      {cacheClearMessage && (
+        <div className="flex-none border-b border-violet-100 bg-violet-50 px-5 py-2 text-xs font-medium text-violet-700">
+          {cacheClearMessage}
         </div>
       )}
 
@@ -384,21 +866,23 @@ export default function ReaderPage() {
 
             <div className="mb-5 rounded-xl border border-violet-100 bg-white p-4">
               <p className="text-xs font-semibold uppercase tracking-widest text-violet-500">
-                Paragraphe sélectionné
+                {selectedPassage?.label ?? 'Sélection'}
               </p>
               <p className="mt-2 line-clamp-4 font-serif text-sm leading-relaxed text-stone-600">
-                {paragraph?.text}
+                {selectedPassage?.text ?? 'Sélectionnez un paragraphe, quelques lignes ou plusieurs paragraphes.'}
               </p>
-              {paragraph && (
+              {selectedPassage && (
                 <button
                   type="button"
-                  onClick={() => explainParagraph(paragraph)}
-                  disabled={isLoading && explainedParagraphIndex === paragraph.globalIndex}
+                  onClick={() => explainPassage(selectedPassage)}
+                  disabled={isLoading}
                   className="mt-4 inline-flex items-center rounded-full bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:cursor-wait disabled:bg-violet-300"
                 >
-                  {isLoading && explainedParagraphIndex === paragraph.globalIndex
+                  {isLoading
                     ? 'Génération...'
-                    : 'Expliquer ce paragraphe'}
+                    : selectedPassage.paragraphIndex === null
+                      ? 'Expliquer la sélection'
+                      : 'Expliquer ce paragraphe'}
                 </button>
               )}
             </div>
@@ -409,7 +893,7 @@ export default function ReaderPage() {
               <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-600">
                 {loadError}
                 <button
-                  onClick={() => paragraph && explainParagraph(paragraph)}
+                  onClick={() => selectedPassage && explainPassage(selectedPassage)}
                   className="mt-2 block text-red-700 underline hover:no-underline"
                 >
                   Réessayer
@@ -418,18 +902,18 @@ export default function ReaderPage() {
             )}
 
             {explanation && (
-              <p className="rounded-2xl bg-white p-5 text-stone-700 shadow-sm leading-relaxed text-[15px]">
-                {explanation}
+              <div className="analysis-markdown rounded-2xl bg-white p-5 text-stone-700 shadow-sm">
+                <ReactMarkdown>{explanation}</ReactMarkdown>
                 {isLoading && (
                   <span className="inline-block w-0.5 h-4 ml-0.5 bg-violet-400 animate-pulse align-middle" />
                 )}
-              </p>
+              </div>
             )}
 
             {!isLoading && !loadError && !explanation && (
               <div className="rounded-xl border border-dashed border-stone-200 bg-white/70 p-5 text-sm leading-relaxed text-stone-500">
-                Cliquez sur « Expliquer » dans un paragraphe, ou utilisez le bouton ci-dessus,
-                pour générer une explication uniquement quand vous en avez besoin.
+                Sélectionnez du texte librement, cliquez un paragraphe, utilisez Cmd/Ctrl+clic
+                pour en ajouter, ou Shift+clic pour sélectionner une plage.
               </div>
             )}
           </div>
@@ -438,6 +922,7 @@ export default function ReaderPage() {
         <button
           type="button"
           role="separator"
+          title="Ajuster la largeur des panneaux"
           aria-label="Ajuster la largeur des panneaux"
           aria-orientation="vertical"
           aria-valuemin={MIN_SPLIT_PERCENT}
@@ -445,60 +930,96 @@ export default function ReaderPage() {
           aria-valuenow={Math.round(splitPercent)}
           onPointerDown={handleSplitResizeStart}
           onKeyDown={handleSplitKeyDown}
-          className="reader-splitter hidden md:flex flex-none items-center justify-center bg-stone-200 transition-colors hover:bg-violet-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+          className="reader-splitter group hidden flex-none items-center justify-center bg-stone-300/80 transition-colors hover:bg-violet-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 md:flex"
         >
-          <span className="h-10 w-1 rounded-full bg-stone-400/60" />
+          <span className="flex h-12 w-2 flex-col items-center justify-center gap-1 rounded-full bg-white/70 shadow-sm group-hover:bg-white">
+            <span className="h-1 w-1 rounded-full bg-stone-400" />
+            <span className="h-1 w-1 rounded-full bg-stone-400" />
+            <span className="h-1 w-1 rounded-full bg-stone-400" />
+          </span>
         </button>
 
         {/* Right: Book text */}
         <section
+          ref={bookPaneRef}
           aria-label="Texte du livre"
-          className="reader-book-pane flex-1 md:flex-none overflow-y-auto panel-scroll bg-stone-200/70 px-4 py-6 md:px-8 md:py-10"
+          onScroll={updateCurrentParagraphFromScroll}
+          onMouseUp={captureTextSelection}
+          onTouchEnd={captureTextSelection}
+          className="reader-book-pane relative flex-1 md:flex-none overflow-y-auto panel-scroll bg-stone-200/70 px-4 py-6 md:px-8 md:py-10"
         >
           <div className="mx-auto max-w-3xl">
-            {pageParagraphs.length > 0 ? (
+            {displayedParagraphs.length > 0 ? (
               <div
                 className="book-page min-h-full rounded-sm px-8 py-10 md:px-16 md:py-16"
                 style={{ '--book-font-size': `${bookFontSize}px` } as CSSProperties}
               >
                 <div className="mb-10 border-b border-stone-200 pb-4 text-center">
                   <p className="text-[11px] font-medium uppercase tracking-[0.35em] text-stone-400">
-                    {chapterLabel}
+                    {bookHeaderLabel}
                   </p>
                 </div>
-                <div className="space-y-5">
-                  {pageParagraphs.map(item => {
-                    const isSelected = item.globalIndex === currentIndex;
+                <div className="space-y-0">
+                  {displayedParagraphs.map((item, index) => {
+                    const isSelected = selectedParagraphIndexes.includes(item.globalIndex);
                     const isExplaining = isLoading && explainedParagraphIndex === item.globalIndex;
+                    const previousParagraph = displayedParagraphs[index - 1];
+                    const shouldShowChapterSeparator =
+                      readingMode === 'scroll' && item.chapterTitle !== previousParagraph?.chapterTitle;
 
                     return (
-                      <article
-                        key={item.globalIndex}
-                        className={[
-                          'book-paragraph-block relative rounded-lg px-4 py-2 transition-colors',
-                          isSelected
-                            ? 'book-paragraph-active'
-                            : '',
-                        ].join(' ')}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => selectParagraph(item.globalIndex)}
-                          className="book-paragraph block w-full text-left"
+                      <Fragment key={item.globalIndex}>
+                        {shouldShowChapterSeparator && (
+                          <div className="my-10 flex items-center gap-4 first:mt-0">
+                            <div className="h-px flex-1 bg-stone-200" />
+                            <p className="max-w-[70%] text-center text-[11px] font-medium uppercase tracking-[0.3em] text-stone-400">
+                              {item.chapterTitle}
+                            </p>
+                            <div className="h-px flex-1 bg-stone-200" />
+                          </div>
+                        )}
+                        <article
+                          data-paragraph-index={item.globalIndex}
+                          role="button"
+                          tabIndex={0}
+                          onClick={event => {
+                            const selectedText = window.getSelection()?.toString().trim() ?? '';
+                            if (selectedText.length > 0) return;
+                            selectParagraph(item.globalIndex, {
+                              additive: event.metaKey || event.ctrlKey,
+                              range: event.shiftKey,
+                            });
+                          }}
+                          onKeyDown={event => {
+                            if (event.key !== 'Enter' && event.key !== ' ') return;
+                            event.preventDefault();
+                            selectParagraph(item.globalIndex);
+                          }}
+                          className={[
+                            'book-paragraph-block relative rounded-lg px-4 py-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-300',
+                            isSelected
+                              ? 'book-paragraph-active'
+                              : '',
+                          ].join(' ')}
                         >
-                          {item.text}
-                        </button>
-                        <div className="book-explain-action mt-2 flex justify-end transition-opacity">
-                          <button
-                            type="button"
-                            onClick={() => explainParagraph(item)}
-                            disabled={isExplaining}
-                            className="rounded-full border border-stone-300 bg-[#fffdf7]/95 px-3 py-1.5 text-xs font-medium text-violet-700 shadow-sm transition-colors hover:border-violet-300 hover:bg-violet-50 disabled:cursor-wait disabled:text-violet-300"
-                          >
-                            {isExplaining ? 'Génération...' : 'Expliquer'}
-                          </button>
-                        </div>
-                      </article>
+                          <p className="book-paragraph block w-full text-left">
+                            {item.text}
+                          </p>
+                          <div className="book-explain-action transition-opacity">
+                            <button
+                              type="button"
+                              onClick={event => {
+                                event.stopPropagation();
+                                explainParagraph(item);
+                              }}
+                              disabled={isExplaining}
+                              className="rounded-full border border-stone-300 bg-[#fffdf7]/95 px-4 py-2 text-xs font-medium text-violet-700 shadow-sm transition-colors hover:border-violet-300 hover:bg-violet-50 disabled:cursor-wait disabled:text-violet-300 md:px-3 md:py-1.5"
+                            >
+                              {isExplaining ? 'Génération...' : 'Expliquer'}
+                            </button>
+                          </div>
+                        </article>
+                      </Fragment>
                     );
                   })}
                 </div>
@@ -507,43 +1028,80 @@ export default function ReaderPage() {
               <p className="text-slate-400 italic">Fin du livre.</p>
             )}
           </div>
+          <div
+            ref={paginationMeasureRef}
+            aria-hidden="true"
+            className="pagination-measure mx-auto max-w-3xl"
+          >
+            <div
+              className="book-page min-h-full rounded-sm px-8 py-10 md:px-16 md:py-16"
+              style={{ '--book-font-size': `${bookFontSize}px` } as CSSProperties}
+            >
+              <div className="mb-10 border-b border-stone-200 pb-4 text-center">
+                <p className="text-[11px] font-medium uppercase tracking-[0.35em] text-stone-400">
+                  Mesure
+                </p>
+              </div>
+              <div data-pagination-measure-content>
+                {epub.paragraphs.map(item => (
+                  <article
+                    key={item.globalIndex}
+                    data-measure-paragraph-index={item.globalIndex}
+                    className="book-paragraph-block relative rounded-lg px-4 py-2"
+                  >
+                    <div className="book-paragraph block w-full text-left">
+                      {item.text}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </div>
         </section>
       </main>
 
       {/* ── Navigation footer ── */}
-      <footer className="flex-none flex items-center justify-between gap-4 px-5 py-3 bg-white border-t border-slate-200">
-        <button
-          onClick={() => {
-            resetExplanation();
-            navigate(pageStartIndex - PARAGRAPHS_PER_PAGE);
-          }}
-          disabled={isFirst}
-          aria-label="Page précédente"
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all
-            disabled:opacity-30 disabled:cursor-not-allowed
-            enabled:text-slate-700 enabled:hover:bg-slate-100 enabled:active:bg-slate-200"
-        >
-          ← Précédent
-        </button>
+      {readingMode === 'pages' && (
+        <footer className="flex-none flex items-center justify-between gap-4 px-5 py-3 bg-white border-t border-slate-200">
+          <button
+            onClick={() => {
+              const previousPage = pages[currentPage - 1];
+              if (!previousPage) return;
 
-        <span className="text-xs text-slate-400 tabular-nums">
-          Page {currentPage + 1} / {totalPages}
-        </span>
+              resetExplanation();
+              navigate(previousPage[0].globalIndex);
+            }}
+            disabled={isFirst}
+            aria-label="Page précédente"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all
+              disabled:opacity-30 disabled:cursor-not-allowed
+              enabled:text-slate-700 enabled:hover:bg-slate-100 enabled:active:bg-slate-200"
+          >
+            ← Précédent
+          </button>
 
-        <button
-          onClick={() => {
-            resetExplanation();
-            navigate(pageStartIndex + PARAGRAPHS_PER_PAGE);
-          }}
-          disabled={isLast}
-          aria-label="Page suivante"
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all
-            disabled:opacity-30 disabled:cursor-not-allowed
-            enabled:text-slate-700 enabled:hover:bg-slate-100 enabled:active:bg-slate-200"
-        >
-          Suivant →
-        </button>
-      </footer>
+          <span className="text-xs text-slate-400 tabular-nums">
+            Page {currentPage + 1} / {totalPages}
+          </span>
+
+          <button
+            onClick={() => {
+              const nextPage = pages[currentPage + 1];
+              if (!nextPage) return;
+
+              resetExplanation();
+              navigate(nextPage[0].globalIndex);
+            }}
+            disabled={isLast}
+            aria-label="Page suivante"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all
+              disabled:opacity-30 disabled:cursor-not-allowed
+              enabled:text-slate-700 enabled:hover:bg-slate-100 enabled:active:bg-slate-200"
+          >
+            Suivant →
+          </button>
+        </footer>
+      )}
     </div>
   );
 }

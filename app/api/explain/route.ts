@@ -4,6 +4,7 @@ import { EXPLANATION_SYSTEM_PROMPT } from '@/config/prompts';
 
 const client = new Anthropic();
 const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
+const MAX_OUTPUT_TOKENS = 900;
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,14 +26,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const contextLines = [
+      bookTitle ? `- Titre du livre : ${bookTitle}` : null,
+      author ? `- Auteur : ${author}` : null,
+    ].filter((line): line is string => line !== null);
+
     const userContent = [
-      bookTitle && author ? `Livre : « ${bookTitle} » — ${author}\n\n` : '',
-      `Passage :\n${passage.slice(0, 2000)}`,
+      `## Contexte du livre
+${contextLines.length > 0 ? contextLines.join('\n') : '- Métadonnées indisponibles'}
+
+Utilise ce contexte pour éclairer le passage quand il est pertinent, sans plaquer des généralités sur l'œuvre ou l'auteur.
+
+## Passage à commenter
+${passage.slice(0, 2000)}`,
     ].join('');
 
     const stream = client.messages.stream({
       model: MODEL,
-      max_tokens: 350,
+      max_tokens: MAX_OUTPUT_TOKENS,
       system: EXPLANATION_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }],
     });
