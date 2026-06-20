@@ -934,16 +934,21 @@ export default function ReaderPage() {
             <button
               type="button"
               onClick={() => setIsSettingsOpen(isOpen => !isOpen)}
-              className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-500 shadow-sm transition-colors hover:bg-white hover:text-stone-700"
+              className={[
+                'rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition-colors hover:bg-white',
+                anthropicApiKey.trim()
+                  ? 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800'
+                  : 'border-amber-200 bg-amber-50 text-amber-800 hover:text-amber-950',
+              ].join(' ')}
               aria-expanded={isSettingsOpen}
               aria-haspopup="menu"
             >
-              Réglages
+              ⚙ Réglages IA
             </button>
             {isSettingsOpen && (
               <div
                 role="menu"
-                className="absolute right-0 z-30 mt-2 w-80 rounded-2xl border border-stone-200 bg-white p-3 text-sm shadow-xl"
+                className="fixed left-3 right-3 top-24 z-40 rounded-2xl border border-stone-200 bg-white p-3 text-sm shadow-xl md:absolute md:left-auto md:right-0 md:top-auto md:mt-2 md:w-80"
               >
                 <div className="space-y-3 border-b border-stone-100 pb-3">
                   <div>
