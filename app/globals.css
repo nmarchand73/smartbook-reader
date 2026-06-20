@@ -17,6 +17,71 @@
   .skeleton {
     @apply rounded bg-slate-200 animate-pulse-slow;
   }
+
+  .book-page {
+    --book-font-size: 18px;
+    background:
+      linear-gradient(90deg, rgba(120, 113, 108, 0.08), transparent 12%, transparent 88%, rgba(120, 113, 108, 0.08)),
+      #fffdf7;
+    box-shadow:
+      0 24px 60px rgba(41, 37, 36, 0.12),
+      inset 0 0 0 1px rgba(120, 113, 108, 0.12);
+  }
+
+  .book-paragraph {
+    color: #292524;
+    font-family: Georgia, Cambria, "Times New Roman", serif;
+    font-size: var(--book-font-size);
+    line-height: 1.95;
+    text-align: justify;
+    text-indent: 1.75rem;
+    hyphens: auto;
+  }
+
+  .book-page .book-paragraph-block:first-child .book-paragraph {
+    text-indent: 0;
+  }
+
+  .book-paragraph-active {
+    background: rgba(139, 92, 246, 0.07);
+    box-shadow: inset 3px 0 0 rgba(124, 58, 237, 0.45);
+  }
+
+  .book-explain-action {
+    opacity: 1;
+  }
+
+  .reader-explanation-pane,
+  .reader-book-pane {
+    width: 100%;
+  }
+
+  @media (hover: hover) {
+    .book-explain-action {
+      opacity: 0;
+    }
+
+    .book-paragraph-block:hover .book-explain-action,
+    .book-paragraph-block:focus-within .book-explain-action {
+      opacity: 1;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .reader-explanation-pane {
+      width: var(--reader-split-percent, 42%);
+    }
+
+    .reader-book-pane {
+      width: calc(100% - var(--reader-split-percent, 42%) - 0.5rem);
+    }
+
+    .reader-splitter {
+      width: 0.5rem;
+      cursor: col-resize;
+      touch-action: none;
+    }
+  }
 }
 
 /* Smooth scroll for panel content */
@@ -34,4 +99,9 @@
 .panel-scroll::-webkit-scrollbar-thumb {
   background-color: #cbd5e1;
   border-radius: 3px;
+}
+
+nextjs-portal {
+  left: unset !important;
+  top: unset !important;
 }

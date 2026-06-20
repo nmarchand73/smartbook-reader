@@ -20,7 +20,22 @@ interface EpubContextValue {
 const EpubContext = createContext<EpubContextValue | null>(null);
 
 const SESSION_KEY = 'sbr_epub_data';
-const posKey = (title: string) => `sbr_pos_${title}`;
+const bookKey = (epub: ParsedEpub) => `${epub.title}::${epub.author}`;
+const posKey = (epub: ParsedEpub) => `sbr_pos_${bookKey(epub)}`;
+
+function getSavedPosition(epub: ParsedEpub): number {
+  try {
+    const storedPosition = localStorage.getItem(posKey(epub));
+    if (!storedPosition) return 0;
+
+    const parsedPosition = parseInt(storedPosition, 10);
+    if (!Number.isFinite(parsedPosition)) return 0;
+
+    return Math.max(0, Math.min(parsedPosition, epub.paragraphs.length - 1));
+  } catch {
+    return 0;
+  }
+}
 
 export function EpubProvider({ children }: { children: ReactNode }) {
   const [epub, setEpubState] = useState<ParsedEpub | null>(null);
@@ -33,8 +48,7 @@ export function EpubProvider({ children }: { children: ReactNode }) {
       if (stored) {
         const parsed: ParsedEpub = JSON.parse(stored);
         setEpubState(parsed);
-        const pos = localStorage.getItem(posKey(parsed.title));
-        if (pos) setCurrentIndex(Math.min(parseInt(pos, 10), parsed.paragraphs.length - 1));
+        setCurrentIndex(getSavedPosition(parsed));
       }
     } catch {
       // Corrupt storage — start fresh
@@ -43,7 +57,7 @@ export function EpubProvider({ children }: { children: ReactNode }) {
 
   const setEpub = useCallback((newEpub: ParsedEpub) => {
     setEpubState(newEpub);
-    setCurrentIndex(0);
+    setCurrentIndex(getSavedPosition(newEpub));
     try {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(newEpub));
     } catch {
@@ -57,7 +71,7 @@ export function EpubProvider({ children }: { children: ReactNode }) {
       const clamped = Math.max(0, Math.min(index, epub.paragraphs.length - 1));
       setCurrentIndex(clamped);
       try {
-        localStorage.setItem(posKey(epub.title), clamped.toString());
+        localStorage.setItem(posKey(epub), clamped.toString());
       } catch {}
     },
     [epub]
