@@ -3,13 +3,14 @@ import { NextRequest } from 'next/server';
 import { EXPLANATION_SYSTEM_PROMPT } from '@/config/prompts';
 
 const client = new Anthropic();
-const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
+const DEFAULT_MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
 const MAX_OUTPUT_TOKENS = 900;
 
 async function parseRequestBody(request: NextRequest): Promise<{
   passage?: string;
   bookTitle?: string;
   author?: string;
+  model?: string;
 } | null> {
   try {
     return await request.json();
@@ -25,10 +26,11 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Corps JSON manquant ou invalide.' }, { status: 400 });
     }
 
-    const { passage, bookTitle, author } = body as {
+    const { passage, bookTitle, author, model } = body as {
       passage?: string;
       bookTitle?: string;
       author?: string;
+      model?: string;
     };
 
     if (!passage || typeof passage !== 'string' || passage.trim().length === 0) {
@@ -58,7 +60,7 @@ ${passage.slice(0, 2000)}`,
     ].join('');
 
     const stream = client.messages.stream({
-      model: MODEL,
+      model: typeof model === 'string' && model.trim() ? model.trim() : DEFAULT_MODEL,
       max_tokens: MAX_OUTPUT_TOKENS,
       system: EXPLANATION_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userContent }],

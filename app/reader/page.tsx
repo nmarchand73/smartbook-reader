@@ -15,6 +15,7 @@ import ReactMarkdown from 'react-markdown';
 import { useRouter } from 'next/navigation';
 import { useEpub } from '@/context/EpubContext';
 import { clearExplanationCache, getCachedExplanation, setCachedExplanation } from '@/lib/cache';
+import { EXPLANATION_SYSTEM_PROMPT } from '@/config/prompts';
 import type { Paragraph } from '@/lib/epub-parser';
 
 const PARAGRAPHS_PER_PAGE = 5;
@@ -28,6 +29,10 @@ const DEFAULT_SPLIT_PERCENT = 42;
 const MIN_SPLIT_PERCENT = 28;
 const MAX_SPLIT_PERCENT = 64;
 const READING_MODE_STORAGE_KEY = 'sbr_reader_mode';
+const ANTHROPIC_API_KEY_STORAGE_KEY = 'sbr_anthropic_api_key';
+const ANTHROPIC_MODEL_STORAGE_KEY = 'sbr_anthropic_model';
+const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
+const MAX_OUTPUT_TOKENS = 900;
 
 type ReadingMode = 'pages' | 'scroll';
 interface ChapterOption {
@@ -53,6 +58,49 @@ function getPageIndexForParagraph(pages: Paragraph[][], paragraphIndex: number):
   return pageIndex >= 0 ? pageIndex : 0;
 }
 
+function buildExplanationPrompt(passage: string, bookTitle: string, author: string): string {
+  const contextLines = [
+    bookTitle ? `- Titre du livre : ${bookTitle}` : null,
+    author ? `- Auteur : ${author}` : null,
+  ].filter((line): line is string => line !== null);
+
+  return `## Contexte du livre
+${contextLines.length > 0 ? contextLines.join('\n') : '- Métadonnées indisponibles'}
+
+Utilise ce contexte pour éclairer le passage quand il est pertinent, sans plaquer des généralités sur l'œuvre ou l'auteur.
+
+## Passage à commenter
+${passage.slice(0, 2000)}`;
+}
+
+function extractAnthropicText(responseBody: unknown): string {
+  if (
+    typeof responseBody !== 'object' ||
+    responseBody === null ||
+    !('content' in responseBody) ||
+    !Array.isArray(responseBody.content)
+  ) {
+    return '';
+  }
+
+  return responseBody.content
+    .map(block => {
+      if (
+        typeof block === 'object' &&
+        block !== null &&
+        'type' in block &&
+        block.type === 'text' &&
+        'text' in block &&
+        typeof block.text === 'string'
+      ) {
+        return block.text;
+      }
+
+      return '';
+    })
+    .join('');
+}
+
 // ── Streaming fetch helper ────────────────────────────────────────────────────
 
 async function fetchExplanation(
@@ -60,12 +108,55 @@ async function fetchExplanation(
   bookTitle: string,
   author: string,
   onChunk: (text: string) => void,
+  options: {
+    apiKey: string;
+    model: string;
+  },
   signal?: AbortSignal
 ): Promise<string> {
+  if (options.apiKey.trim()) {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': options.apiKey.trim(),
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: options.model.trim() || DEFAULT_ANTHROPIC_MODEL,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        system: EXPLANATION_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: buildExplanationPrompt(passage, bookTitle, author),
+          },
+        ],
+      }),
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erreur Anthropic : ${response.status}`);
+    }
+
+    const responseBody = await response.json();
+    const full = extractAnthropicText(responseBody);
+    if (!full) throw new Error('Réponse Anthropic vide.');
+    onChunk(full);
+    return full;
+  }
+
   const response = await fetch('/api/explain', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ passage, bookTitle, author }),
+    body: JSON.stringify({
+      passage,
+      bookTitle,
+      author,
+      model: options.model.trim() || DEFAULT_ANTHROPIC_MODEL,
+    }),
     signal,
   });
 
@@ -125,6 +216,8 @@ export default function ReaderPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bookFontSize, setBookFontSize] = useState(DEFAULT_BOOK_FONT_SIZE);
   const [splitPercent, setSplitPercent] = useState(DEFAULT_SPLIT_PERCENT);
+  const [anthropicApiKey, setAnthropicApiKey] = useState('');
+  const [anthropicModel, setAnthropicModel] = useState(DEFAULT_ANTHROPIC_MODEL);
   const [isResizingSplit, setIsResizingSplit] = useState(false);
   const [readingMode, setReadingMode] = useState<ReadingMode>('pages');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -210,6 +303,39 @@ export default function ReaderPage() {
       }
     } catch {
       // Keep the default mode when localStorage is unavailable.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      setAnthropicApiKey(localStorage.getItem(ANTHROPIC_API_KEY_STORAGE_KEY) ?? '');
+      setAnthropicModel(localStorage.getItem(ANTHROPIC_MODEL_STORAGE_KEY) ?? DEFAULT_ANTHROPIC_MODEL);
+    } catch {
+      // Keep empty/default AI settings when localStorage is unavailable.
+    }
+  }, []);
+
+  const updateAnthropicApiKey = useCallback((nextApiKey: string) => {
+    setAnthropicApiKey(nextApiKey);
+
+    try {
+      if (nextApiKey.trim()) {
+        localStorage.setItem(ANTHROPIC_API_KEY_STORAGE_KEY, nextApiKey.trim());
+      } else {
+        localStorage.removeItem(ANTHROPIC_API_KEY_STORAGE_KEY);
+      }
+    } catch {
+      // API key still updates for the current session.
+    }
+  }, []);
+
+  const updateAnthropicModel = useCallback((nextModel: string) => {
+    setAnthropicModel(nextModel);
+
+    try {
+      localStorage.setItem(ANTHROPIC_MODEL_STORAGE_KEY, nextModel);
+    } catch {
+      // Model still updates for the current session.
     }
   }, []);
 
@@ -378,6 +504,10 @@ export default function ReaderPage() {
           text => {
             setExplanation(text);
           },
+          {
+            apiKey: anthropicApiKey,
+            model: anthropicModel,
+          },
           controller.signal
         );
         setCachedExplanation(epubTitle, passageText, full);
@@ -388,7 +518,7 @@ export default function ReaderPage() {
         setIsLoading(false);
       }
     },
-    []
+    [anthropicApiKey, anthropicModel]
   );
 
   const resetExplanation = useCallback(() => {
@@ -810,13 +940,48 @@ export default function ReaderPage() {
             {isSettingsOpen && (
               <div
                 role="menu"
-                className="absolute right-0 z-30 mt-2 w-64 rounded-2xl border border-stone-200 bg-white p-2 text-sm shadow-xl"
+                className="absolute right-0 z-30 mt-2 w-80 rounded-2xl border border-stone-200 bg-white p-3 text-sm shadow-xl"
               >
+                <div className="space-y-3 border-b border-stone-100 pb-3">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
+                      Clé Anthropic locale
+                    </label>
+                    <input
+                      type="password"
+                      value={anthropicApiKey}
+                      onChange={event => updateAnthropicApiKey(event.target.value)}
+                      placeholder="sk-ant-..."
+                      className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none transition-colors focus:border-violet-300"
+                    />
+                    <p className="mt-1 text-xs leading-relaxed text-stone-400">
+                      Stockée dans ce navigateur. Nécessaire sur GitHub Pages.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
+                      Modèle
+                    </label>
+                    <input
+                      type="text"
+                      value={anthropicModel}
+                      onChange={event => updateAnthropicModel(event.target.value)}
+                      className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none transition-colors focus:border-violet-300"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => updateAnthropicApiKey('')}
+                    className="rounded-full px-3 py-1.5 text-xs font-medium text-stone-500 transition-colors hover:bg-stone-50 hover:text-stone-700"
+                  >
+                    Effacer la clé locale
+                  </button>
+                </div>
                 <button
                   type="button"
                   role="menuitem"
                   onClick={handleClearCache}
-                  className="w-full rounded-xl px-3 py-2 text-left text-stone-700 transition-colors hover:bg-stone-50"
+                  className="mt-2 w-full rounded-xl px-3 py-2 text-left text-stone-700 transition-colors hover:bg-stone-50"
                 >
                   <span className="block font-medium">Vider le cache des explications</span>
                   <span className="mt-0.5 block text-xs leading-relaxed text-stone-400">
