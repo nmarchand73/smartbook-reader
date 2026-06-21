@@ -797,6 +797,9 @@ export default function ReaderPage() {
 
         resetExplanation();
         navigate(nextPage[0].globalIndex);
+        requestAnimationFrame(() => {
+          bookPaneRef.current?.scrollTo({ top: 0 });
+        });
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
         const previousPage = paginatedPages[currentPageIndex - 1];
@@ -804,6 +807,9 @@ export default function ReaderPage() {
 
         resetExplanation();
         navigate(previousPage[0].globalIndex);
+        requestAnimationFrame(() => {
+          bookPaneRef.current?.scrollTo({ top: 0 });
+        });
       }
     };
     window.addEventListener('keydown', handler);
@@ -866,6 +872,7 @@ export default function ReaderPage() {
   const totalPages = pages.length;
   const isFirst = currentPage === 0;
   const isLast = currentPage === totalPages - 1;
+  const canNavigatePages = readingMode === 'pages' && totalPages > 0;
   const pageChapterTitles = Array.from(new Set(pageParagraphs.map(item => item.chapterTitle)));
   const chapterLabel = pageChapterTitles.length > 1
     ? `${pageChapterTitles[0]} - ${pageChapterTitles[pageChapterTitles.length - 1]}`
@@ -885,6 +892,20 @@ export default function ReaderPage() {
           ?.scrollIntoView({ block: 'start' });
       });
     }
+  };
+
+  const goToPage = (direction: -1 | 1) => {
+    if (!canNavigatePages) return;
+
+    const liveCurrentPage = getPageIndexForParagraph(pages, currentIndex);
+    const targetPage = pages[liveCurrentPage + direction];
+    if (!targetPage?.[0]) return;
+
+    resetExplanation();
+    navigate(targetPage[0].globalIndex);
+    requestAnimationFrame(() => {
+      bookPaneRef.current?.scrollTo({ top: 0 });
+    });
   };
 
   return (
@@ -1546,44 +1567,38 @@ export default function ReaderPage() {
 
       {/* ── Navigation footer ── */}
       {readingMode === 'pages' && (
-        <footer className="flex-none flex items-center justify-between gap-2 border-t border-slate-200 bg-white px-3 py-2 md:gap-4 md:px-5 md:py-3">
+        <footer className="flex-none border-t border-slate-200 bg-white px-3 py-2 md:px-5 md:py-3">
+          <div className="mx-auto grid max-w-3xl grid-cols-[1fr_auto_1fr] items-center gap-2">
           <button
-            onClick={() => {
-              const previousPage = pages[currentPage - 1];
-              if (!previousPage) return;
-
-              resetExplanation();
-              navigate(previousPage[0].globalIndex);
-            }}
-            disabled={isFirst}
+            type="button"
+            onClick={() => goToPage(-1)}
+            disabled={isFirst || !canNavigatePages}
             aria-label="Page précédente"
-            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium transition-all md:px-4
+            className="flex min-h-11 items-center justify-start gap-2 rounded-2xl px-3 py-2 text-sm font-semibold transition-all md:px-4
               disabled:opacity-30 disabled:cursor-not-allowed
-              enabled:text-slate-700 enabled:hover:bg-slate-100 enabled:active:bg-slate-200"
+              enabled:text-stone-700 enabled:hover:bg-stone-100 enabled:active:bg-stone-200"
           >
-            ← <span className="hidden sm:inline">Précédent</span>
+            <span className="text-lg leading-none">←</span>
+            <span className="hidden sm:inline">Page précédente</span>
           </button>
 
-          <span className="text-xs text-slate-400 tabular-nums">
-            Page {currentPage + 1} / {totalPages}
-          </span>
+          <div className="rounded-full bg-stone-50 px-3 py-1.5 text-center text-xs font-medium tabular-nums text-stone-500 ring-1 ring-stone-200">
+            {canNavigatePages ? `${currentPage + 1} / ${totalPages}` : '...'}
+          </div>
 
           <button
-            onClick={() => {
-              const nextPage = pages[currentPage + 1];
-              if (!nextPage) return;
-
-              resetExplanation();
-              navigate(nextPage[0].globalIndex);
-            }}
-            disabled={isLast}
+            type="button"
+            onClick={() => goToPage(1)}
+            disabled={isLast || !canNavigatePages}
             aria-label="Page suivante"
-            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium transition-all md:px-4
+            className="flex min-h-11 items-center justify-end gap-2 rounded-2xl px-3 py-2 text-sm font-semibold transition-all md:px-4
               disabled:opacity-30 disabled:cursor-not-allowed
-              enabled:text-slate-700 enabled:hover:bg-slate-100 enabled:active:bg-slate-200"
+              enabled:text-stone-700 enabled:hover:bg-stone-100 enabled:active:bg-stone-200"
           >
-            <span className="hidden sm:inline">Suivant</span> →
+            <span className="hidden sm:inline">Page suivante</span>
+            <span className="text-lg leading-none">→</span>
           </button>
+          </div>
         </footer>
       )}
     </div>
