@@ -1,33 +1,29 @@
 # SmartBook Reader
 
-SmartBook Reader is a Next.js app for reading ePub books with AI explanations shown side by side. Upload an `.epub`, move through the book paragraph by paragraph, and the app streams a short contextual explanation for each passage.
+SmartBook Reader is a French-first ePub reader with optional AI comments. It is designed for local reading: the book is parsed in the browser, the reading position is saved locally, and comments are generated only when requested.
 
-The interface is currently in French.
+## What It Does
 
-## Features
+- Opens `.epub` files directly in the browser.
+- Restores the current position per book.
+- Shows recent books with progress and last-read information.
+- Supports two reading modes: `Pages` and `Continu`.
+- Provides a chapter picker with progress-aware navigation.
+- Lets the reader select one paragraph, several paragraphs, or a free text selection.
+- Generates AI comments on demand and caches them locally.
+- Marks paragraphs that already have a saved comment.
+- Works on desktop and mobile with a compact bottom-sheet comment panel.
 
-- Drag-and-drop `.epub` upload with client-side parsing.
-- Paragraph-by-paragraph reading experience with previous/next controls and arrow-key navigation.
-- Split reader view: original book text on one side, AI explanation on the other.
-- Streaming explanations from Anthropic through a Next.js API route.
-- Background pre-generation for the next paragraph.
-- Local explanation cache so the same paragraph is not requested twice.
-- Reading-position persistence per book title.
-- Session restore after a page refresh while the parsed ePub remains in browser session storage.
+## AI Configuration
 
-## Tech Stack
+AI comments can work in two ways:
 
-- Next.js 15 App Router
-- React 19
-- TypeScript
-- Tailwind CSS
-- Anthropic SDK
-- JSZip for client-side ePub parsing
+- Locally during development through `/api/explain`, using `ANTHROPIC_API_KEY`.
+- In a static GitHub Pages deployment through a local Anthropic key entered in the app.
 
-## Requirements
+The in-app key is saved only in the browser's `localStorage`. It is not committed, not bundled, and not stored on a server.
 
-- Node.js 20 or newer is recommended.
-- An Anthropic API key.
+If no key is configured, the reader still works. Only AI comment generation is unavailable.
 
 ## Getting Started
 
@@ -37,16 +33,17 @@ Install dependencies:
 npm install
 ```
 
-Create a local environment file:
+Optionally create a local environment file for server-side AI calls:
 
 ```bash
 cp .env.example .env.local
 ```
 
-Then set your Anthropic API key:
+Then set:
 
 ```bash
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+ANTHROPIC_MODEL=claude-sonnet-4-6
 ```
 
 Run the development server:
@@ -55,7 +52,7 @@ Run the development server:
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), upload an `.epub`, and start reading.
+Open [http://localhost:3000](http://localhost:3000), select an `.epub`, and start reading.
 
 ## Available Scripts
 
@@ -63,7 +60,7 @@ Open [http://localhost:3000](http://localhost:3000), upload an `.epub`, and star
 npm run dev
 ```
 
-Starts the development server with Turbopack.
+Starts the Next.js development server with Turbopack.
 
 ```bash
 npm run build
@@ -81,33 +78,53 @@ Starts the production server after a build.
 npm run lint
 ```
 
-Runs the Next.js lint command configured for the project.
+Runs the configured Next.js lint command.
+
+## GitHub Pages
+
+The app can be exported as a static site for GitHub Pages. The deploy workflow lives in:
+
+```text
+.github/workflows/deploy-pages.yml
+```
+
+When `GITHUB_PAGES=true`, `next.config.ts` enables static export settings and uses the `/smartbook-reader` base path.
+
+Because GitHub Pages is static, server routes are not available there. AI comments on GitHub Pages require entering an Anthropic API key in the app's `Clé IA` panel.
 
 ## How It Works
 
-The home page accepts an `.epub` file and parses it in the browser with `JSZip`. The parser reads `META-INF/container.xml`, locates the OPF package file, follows the spine reading order, extracts chapter titles from the table of contents or headings, and turns readable HTML blocks into paragraph records.
+The home page accepts an `.epub` file and parses it in the browser with `JSZip`. The parser reads `META-INF/container.xml`, locates the OPF package file, follows the spine reading order, resolves table-of-contents titles, and turns readable HTML blocks into paragraph records.
 
-Parsed book data is stored in React context and mirrored to `sessionStorage` so a refresh can restore the current book. Reading position is stored in `localStorage` by book title.
+Parsed book data is stored in React context and mirrored to `sessionStorage` so refreshes can restore the loaded book while the session is still available.
 
-The reader page requests explanations from `/api/explain`. That route validates the request, calls Anthropic with a French reading-companion system prompt, and streams plain text back to the browser. Explanations are cached in `localStorage` using a hash of the book title and paragraph text.
+Reading position, recent-book metadata, AI settings, font size, reading mode, split position, and cached comments are stored in `localStorage`.
+
+AI comments are generated on demand. Comments are cached using a hash of the book title and selected passage text. Cached paragraphs are marked in the reader and can be reopened without another AI call.
 
 ## Project Structure
 
 ```text
 app/
-  api/explain/route.ts   Streaming Anthropic explanation endpoint
-  page.tsx               ePub upload screen
-  reader/page.tsx        Split reader and explanation UI
+  api/explain/route.ts       Anthropic explanation endpoint for local/server use
+  globals.css                Reader, book, markdown, and loading styles
+  page.tsx                   Home page, upload, recent books, AI settings
+  reader/page.tsx            Reader UI, pages/continuous modes, comments
+config/
+  prompts.ts                 System prompt for AI comments
 context/
-  EpubContext.tsx        Current book, navigation, and persistence state
+  EpubContext.tsx            Current book, navigation, position persistence
 lib/
-  epub-parser.ts         Client-side ePub parsing
-  cache.ts               Local explanation cache helpers
+  cache.ts                   Local AI comment cache helpers
+  epub-parser.ts             Client-side ePub parsing
+  recent-books.ts            Recent-reading metadata in localStorage
 ```
 
-## Notes
+## Browser Storage
 
-- ePub files are parsed locally in the browser. Passage text is sent to the server route only when an explanation is generated.
-- The explanation route sends at most the first 2,000 characters of a paragraph to Anthropic.
-- Cached explanations and reading positions live in the browser's `localStorage`.
-- Uploaded book data is kept in `sessionStorage`, not in a database.
+SmartBook Reader stores convenience data in the browser:
+
+- `sessionStorage`: currently loaded parsed ePub.
+- `localStorage`: reading positions, recent books, settings, cache, AI key and model.
+
+Browsers cannot usually reopen a local file automatically after the session is gone. If the parsed book is no longer in `sessionStorage`, the home page asks the reader to reimport the same ePub.
