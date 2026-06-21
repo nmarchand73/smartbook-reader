@@ -3,15 +3,23 @@ import JSZip from 'jszip';
 export interface Paragraph {
   text: string;
   chapterTitle: string;
+  isSyntheticChapterTitle: boolean;
   chapterIndex: number;
   indexInChapter: number;
   globalIndex: number;
+}
+
+export interface EpubTocItem {
+  title: string;
+  path: string;
+  firstIndex: number;
 }
 
 export interface ParsedEpub {
   title: string;
   author: string;
   paragraphs: Paragraph[];
+  toc?: EpubTocItem[];
 }
 
 async function readZipEntry(zip: JSZip, path: string): Promise<string | null> {
@@ -39,6 +47,41 @@ function normalizePath(path: string): string {
 
 function pathWithoutFragment(path: string): string {
   return path.split('#')[0];
+}
+
+function titleFromHref(href: string): string | null {
+  const fileName = href.split('/').pop() ?? '';
+  const withoutExtension = fileName.replace(/\.[^.]+$/, '');
+  const readable = decodeURIComponent(withoutExtension).trim();
+
+  // Many ePubs use internal file names like "part0007.xhtml"; never expose
+  // those implementation details as reader-facing chapter names.
+  if (/^(part|chapter|chap|section|text|x?html)?[-_\s]*\d+$/i.test(readable)) {
+    return null;
+  }
+
+  const normalized = readable
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return normalized || null;
+}
+
+function addTocItem(
+  tocItems: Array<Omit<EpubTocItem, 'firstIndex'>>,
+  sourcePath: string,
+  rawHref: string,
+  rawTitle: string
+): void {
+  const href = pathWithoutFragment(rawHref);
+  const title = rawTitle.replace(/\s+/g, ' ').trim();
+  if (!href || !title) return;
+
+  const path = normalizePath(resolvePath(sourcePath, href));
+  if (tocItems.some(item => item.path === path)) return;
+
+  tocItems.push({ title, path });
 }
 
 function extractParagraphs(html: string): string[] {
@@ -143,9 +186,10 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
 
   // Optional: collect NCX/nav titles
   const tocTitles: Record<string, string> = {};
+  const tocItems: Array<Omit<EpubTocItem, 'firstIndex'>> = [];
   const ncxId = opf.querySelector('spine')?.getAttribute('toc');
   if (ncxId && fullManifest[ncxId]) {
-    const ncxPath = resolvePath(rootfilePath, fullManifest[ncxId]);
+    const ncxPath = normalizePath(resolvePath(rootfilePath, fullManifest[ncxId]));
     const ncxContent = await readZipEntry(zip, ncxPath);
     if (ncxContent) {
       const ncx = domParser.parseFromString(ncxContent, 'application/xml');
@@ -156,6 +200,7 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
           const normalizedPath = normalizePath(resolvePath(ncxPath, src));
           tocTitles[src] = label;
           tocTitles[normalizedPath] = label;
+          addTocItem(tocItems, ncxPath, src, label);
         }
       });
     }
@@ -167,17 +212,21 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
   );
   if (navItem) {
     const navHref = navItem.getAttribute('href') ?? '';
-    const navPath = resolvePath(rootfilePath, navHref);
+    const navPath = normalizePath(resolvePath(rootfilePath, navHref));
     const navContent = await readZipEntry(zip, navPath);
     if (navContent) {
       const navDoc = domParser.parseFromString(navContent, 'text/html');
-      navDoc.querySelectorAll('nav[epub\\:type="toc"] a, nav a').forEach(a => {
+      const navLinks = navDoc.querySelectorAll(
+        'nav[epub\\:type="toc"] a, nav[type="toc"] a, nav a'
+      );
+      navLinks.forEach(a => {
         const href = pathWithoutFragment(a.getAttribute('href') ?? '');
         const label = a.textContent?.trim() ?? '';
         if (href && label) {
           const normalizedPath = normalizePath(resolvePath(navPath, href));
           tocTitles[href] = label;
           tocTitles[normalizedPath] = label;
+          addTocItem(tocItems, navPath, href, label);
         }
       });
     }
@@ -185,6 +234,7 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
 
   // Step 3: Extract paragraphs from each spine item
   const paragraphs: Paragraph[] = [];
+  const firstParagraphIndexByPath: Record<string, number> = {};
   let globalIndex = 0;
 
   for (let chapterIndex = 0; chapterIndex < spineItems.length; chapterIndex++) {
@@ -197,13 +247,20 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
     if (!htmlContent) continue;
 
     const tocTitle = tocTitles[fullPath] ?? tocTitles[href] ?? '';
-    const chapterTitle = tocTitle || getChapterTitle(htmlContent, `Chapitre ${chapterIndex + 1}`);
+    const fallbackTitle = titleFromHref(href);
+    const isSyntheticChapterTitle = !tocTitle && !fallbackTitle;
+    const chapterTitle = tocTitle || getChapterTitle(htmlContent, fallbackTitle ?? 'Section sans titre');
 
     const texts = extractParagraphs(htmlContent);
+    if (texts.length > 0) {
+      firstParagraphIndexByPath[fullPath] = globalIndex;
+      firstParagraphIndexByPath[href] = globalIndex;
+    }
     texts.forEach((text, indexInChapter) => {
       paragraphs.push({
         text,
         chapterTitle,
+        isSyntheticChapterTitle,
         chapterIndex,
         indexInChapter,
         globalIndex: globalIndex++,
@@ -215,5 +272,12 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
     throw new Error('Impossible d\'extraire du texte de ce fichier ePub.');
   }
 
-  return { title, author, paragraphs };
+  const toc = tocItems
+    .map(item => ({
+      ...item,
+      firstIndex: firstParagraphIndexByPath[item.path],
+    }))
+    .filter((item): item is EpubTocItem => Number.isFinite(item.firstIndex));
+
+  return { title, author, paragraphs, toc };
 }

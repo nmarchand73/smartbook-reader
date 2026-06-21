@@ -42,6 +42,7 @@ interface ChapterOption {
   chapterIndex: number;
   paragraphCount: number;
   preview: string;
+  isSynthetic: boolean;
 }
 interface SelectedPassage {
   text: string;
@@ -850,7 +851,7 @@ export default function ReaderPage() {
   const pageParagraphs = pages[currentPage] ?? pages[0] ?? [];
   const displayedParagraphs = readingMode === 'pages' ? pageParagraphs : epub.paragraphs;
   const currentParagraph = epub.paragraphs[currentIndex];
-  const chapterOptions = epub.paragraphs.reduce<ChapterOption[]>((chapters, item) => {
+  const allChapterOptions = epub.paragraphs.reduce<ChapterOption[]>((chapters, item) => {
     const existingChapter = chapters.find(chapter => chapter.chapterIndex === item.chapterIndex);
     if (existingChapter) {
       existingChapter.paragraphCount += 1;
@@ -863,12 +864,35 @@ export default function ReaderPage() {
       chapterIndex: item.chapterIndex,
       paragraphCount: 1,
       preview: item.text,
+      isSynthetic: item.isSyntheticChapterTitle === true,
     });
     return chapters;
   }, []);
+  const tocChapterOptions = (epub.toc ?? []).map((item, index, tocItems): ChapterOption => {
+    const paragraph = epub.paragraphs[item.firstIndex] ?? epub.paragraphs[0];
+    const nextItem = tocItems[index + 1];
+    const nextIndex = nextItem?.firstIndex ?? epub.paragraphs.length;
+
+    return {
+      title: item.title,
+      firstIndex: item.firstIndex,
+      chapterIndex: paragraph?.chapterIndex ?? index,
+      paragraphCount: Math.max(1, nextIndex - item.firstIndex),
+      preview: paragraph?.text ?? '',
+      isSynthetic: false,
+    };
+  });
+  const chapterOptions = tocChapterOptions.length > 0
+    ? tocChapterOptions
+    : allChapterOptions.filter(chapter => !chapter.isSynthetic);
   const currentChapterStartIndex = [...chapterOptions]
     .reverse()
-    .find(chapter => chapter.firstIndex <= currentIndex)?.firstIndex ?? chapterOptions[0]?.firstIndex ?? 0;
+    .find(chapter => chapter.firstIndex <= currentIndex)?.firstIndex ??
+    [...allChapterOptions]
+      .reverse()
+      .find(chapter => chapter.firstIndex <= currentIndex)?.firstIndex ??
+    allChapterOptions[0]?.firstIndex ??
+    0;
   const totalPages = pages.length;
   const isFirst = currentPage === 0;
   const isLast = currentPage === totalPages - 1;
@@ -977,7 +1001,12 @@ export default function ReaderPage() {
                   </div>
                 </div>
                 <div className="max-h-[68dvh] overflow-y-auto p-2 md:max-h-[min(70vh,30rem)]">
-                  {chapterOptions.map((chapter, index) => {
+                  {chapterOptions.length === 0 && (
+                    <div className="rounded-2xl bg-stone-50 p-4 text-sm leading-relaxed text-stone-500">
+                      Aucun titre de chapitre exploitable n’a été trouvé dans cet ePub.
+                    </div>
+                  )}
+                  {chapterOptions.map((chapter) => {
                     const isCurrentChapter = chapter.firstIndex === currentChapterStartIndex;
                     const chapterPage = getPageIndexForParagraph(pages, chapter.firstIndex) + 1;
 
@@ -994,21 +1023,8 @@ export default function ReaderPage() {
                             : 'text-stone-700 hover:bg-stone-50',
                         ].join(' ')}
                       >
-                        <span
-                          className={[
-                            'mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full text-[11px] font-semibold',
-                            isCurrentChapter
-                              ? 'bg-violet-600 text-white'
-                              : 'bg-stone-100 text-stone-400',
-                          ].join(' ')}
-                        >
-                          {index + 1}
-                        </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block text-[11px] font-semibold uppercase tracking-[0.2em] text-stone-400">
-                            Chapitre {index + 1}
-                          </span>
-                          <span className="mt-0.5 block text-sm font-medium leading-snug">
+                          <span className="block text-sm font-medium leading-snug">
                             {chapter.title}
                           </span>
                           <span className="mt-1 line-clamp-2 text-xs leading-relaxed text-stone-400">
