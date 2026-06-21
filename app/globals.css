@@ -47,6 +47,20 @@
     box-shadow: inset 3px 0 0 rgba(124, 58, 237, 0.45);
   }
 
+  .book-paragraph-explained:not(.book-paragraph-active) {
+    box-shadow: inset 2px 0 0 rgba(168, 162, 158, 0.55);
+  }
+
+  .book-explained-badge {
+    color: #8b5cf6;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    margin-top: 0.15rem;
+    text-align: right;
+    text-transform: uppercase;
+  }
+
   .book-explain-action {
     position: absolute;
     right: 0.75rem;
@@ -160,7 +174,38 @@
 
   @media (hover: none) {
     .book-paragraph-block {
-      padding-right: 6.5rem;
+      padding-right: 0;
+    }
+
+    .book-explain-action {
+      display: none;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .book-page {
+      background: #fffdf7;
+      box-shadow: none;
+    }
+
+    .book-paragraph {
+      line-height: 1.78;
+      text-align: left;
+      text-indent: 1.15rem;
+    }
+
+    .book-paragraph-active {
+      box-shadow: inset 2px 0 0 rgba(124, 58, 237, 0.45);
+      padding-left: 0.75rem;
+    }
+
+    .book-paragraph-explained:not(.book-paragraph-active) {
+      padding-left: 0.75rem;
+    }
+
+    .book-explained-badge {
+      font-size: 0.62rem;
+      text-align: left;
     }
   }
 

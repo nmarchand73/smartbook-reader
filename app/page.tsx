@@ -86,10 +86,11 @@ export default function HomePage() {
   );
 
   return (
-    <div className="min-h-screen bg-stone-50 px-4 py-4 text-stone-900 sm:px-5 sm:py-6">
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3">
+    <div className="min-h-screen bg-[#f7f1e8] text-stone-900">
+      <header className="sticky top-0 z-20 border-b border-stone-200/70 bg-[#f7f1e8]/95 px-4 py-3 backdrop-blur sm:px-5">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white shadow-sm sm:h-10 sm:w-10">
+          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-stone-200/70 sm:h-10 sm:w-10">
             📖
           </div>
           <div>
@@ -102,45 +103,47 @@ export default function HomePage() {
           onClick={() => setIsSettingsOpen(true)}
           className="rounded-full border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 shadow-sm transition-colors hover:border-violet-200 hover:text-violet-700 sm:px-4 sm:text-sm"
         >
-          ⚙ Réglages IA
+          Configurer l’IA
         </button>
+        </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-col gap-5 py-6 sm:gap-8 sm:py-10 lg:grid lg:min-h-[calc(100vh-6rem)] lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
-        <section className="order-2 space-y-4 sm:space-y-6 lg:order-1">
-          <div className="space-y-3">
-            <h1 className="max-w-3xl text-2xl font-semibold tracking-tight text-stone-950 sm:text-4xl md:text-5xl">
+      <main className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:gap-8 sm:px-5 sm:py-10 lg:grid lg:min-h-[calc(100vh-4.5rem)] lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
+        <section className="space-y-4 sm:space-y-6">
+          <div className="rounded-[2rem] border border-stone-200 bg-white/90 p-4 shadow-sm sm:p-6">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-500">
+              Lecteur local
+            </p>
+            <h1 className="mt-3 max-w-3xl text-3xl font-semibold tracking-tight text-stone-950 sm:text-4xl md:text-5xl">
               Ouvrir un livre
             </h1>
-            <p className="max-w-2xl text-sm leading-relaxed text-stone-600 sm:text-base">
-              Choisissez un fichier ePub depuis votre ordinateur. Le fichier est lu dans le navigateur.
+            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-stone-600 sm:text-base">
+              Choisissez un fichier ePub. Le livre, la position de lecture et les réglages restent dans ce navigateur.
             </p>
-          </div>
-
-          <div className="rounded-3xl border border-stone-200 bg-white p-4 shadow-sm sm:p-5">
-            <h2 className="font-semibold text-stone-900">Avant de commencer</h2>
-            <div className="mt-4 space-y-3 text-sm leading-relaxed text-stone-600">
-              <div className="flex gap-3">
-                <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-stone-100 text-xs font-semibold text-stone-500">1</span>
-                <p>Importez un fichier `.epub`. La dernière position est restaurée si le livre a déjà été ouvert.</p>
-              </div>
-              <div className="flex gap-3">
-                <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-stone-100 text-xs font-semibold text-stone-500">2</span>
-                <p>Pour les commentaires IA sur GitHub Pages, renseignez votre clé Anthropic dans `Réglages IA`.</p>
-              </div>
-              <div className="flex gap-3">
-                <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-stone-100 text-xs font-semibold text-stone-500">3</span>
-                <p>Dans le lecteur, sélectionnez un paragraphe, plusieurs paragraphes, ou quelques lignes avant de demander une explication.</p>
-              </div>
+            <div className="mt-4 inline-flex rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-600">
+              {anthropicApiKey.trim()
+                ? 'IA configurée'
+                : 'IA non configurée'}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-stone-200 bg-white p-4 text-sm leading-relaxed text-stone-500">
-            Les livres, la position de lecture, le cache et les réglages sont stockés localement dans ce navigateur.
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+            <div className="rounded-2xl border border-stone-200 bg-white/80 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">1. Import</p>
+              <p className="mt-1 text-sm leading-relaxed text-stone-600">Ouvrez un `.epub` depuis l’appareil.</p>
+            </div>
+            <div className="rounded-2xl border border-stone-200 bg-white/80 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">2. Lecture</p>
+              <p className="mt-1 text-sm leading-relaxed text-stone-600">La dernière position est restaurée par livre.</p>
+            </div>
+            <div className="rounded-2xl border border-stone-200 bg-white/80 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">3. IA</p>
+              <p className="mt-1 text-sm leading-relaxed text-stone-600">Ajoutez la clé Anthropic dans les réglages si besoin.</p>
+            </div>
           </div>
         </section>
 
-        <section className="order-1 rounded-[1.75rem] border border-stone-200 bg-white/90 p-3 shadow-xl shadow-stone-300/30 sm:rounded-[2rem] sm:p-5 lg:order-2 lg:shadow-2xl">
+        <section className="rounded-[2rem] border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-300/40 sm:p-5">
           <div
             role="button"
             tabIndex={0}
@@ -151,10 +154,10 @@ export default function HomePage() {
             onDragLeave={() => setIsDragging(false)}
             onDrop={onDrop}
             className={[
-              'relative flex min-h-[17rem] cursor-pointer flex-col items-center justify-center gap-4 rounded-[1.35rem] border-2 border-dashed p-5 text-center transition-all duration-200 sm:min-h-[22rem] sm:gap-5 sm:rounded-[1.5rem] sm:p-8',
+              'relative flex min-h-[20rem] cursor-pointer flex-col justify-between rounded-[1.55rem] border p-5 transition-all duration-200 sm:min-h-[24rem] sm:p-7',
               isDragging
-                ? 'border-violet-500 bg-violet-50'
-                : 'border-stone-300 bg-stone-50/70 hover:border-violet-300 hover:bg-violet-50/50',
+                ? 'border-violet-400 bg-violet-50'
+                : 'border-stone-200 bg-[#fffdf7] hover:border-violet-300',
               isParsing ? 'pointer-events-none opacity-70' : '',
             ].join(' ')}
           >
@@ -166,32 +169,43 @@ export default function HomePage() {
               onChange={onInputChange}
             />
 
-            {isParsing ? (
-              <>
-                <div className="h-11 w-11 rounded-full border-4 border-violet-500 border-t-transparent animate-spin" />
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-white text-3xl shadow-sm ring-1 ring-stone-200/70">
+                {isParsing ? '⏳' : isDragging ? '📥' : '📚'}
+              </div>
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-stone-500 shadow-sm ring-1 ring-stone-200/70">
+                .epub
+              </span>
+            </div>
+
+            <div>
+              {isParsing ? (
                 <div>
-                  <p className="font-medium text-stone-700">Lecture du fichier en cours…</p>
-                  <p className="mt-1 text-sm text-stone-400">Extraction des chapitres et paragraphes</p>
+                  <div className="h-11 w-11 rounded-full border-4 border-violet-500 border-t-transparent animate-spin" />
+                  <p className="mt-5 text-xl font-semibold text-stone-900">Lecture du fichier…</p>
+                  <p className="mt-2 text-sm leading-relaxed text-stone-500">
+                    Extraction des chapitres et paragraphes.
+                  </p>
                 </div>
-              </>
-            ) : (
-              <>
-                <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-white text-3xl shadow-sm sm:h-16 sm:w-16">
-                  {isDragging ? '📥' : '📚'}
-                </div>
+              ) : (
                 <div>
-                  <p className="text-base font-semibold text-stone-800 sm:text-lg">Déposez votre ePub</p>
-                  <p className="mt-1 text-sm text-stone-500">ou cliquez pour choisir un fichier</p>
+                  <p className="text-2xl font-semibold tracking-tight text-stone-950">
+                    Choisir un ePub
+                  </p>
+                  <p className="mt-2 text-sm leading-relaxed text-stone-500">
+                    Sur mobile, touchez la carte pour sélectionner un fichier.
+                    Sur ordinateur, vous pouvez aussi déposer le fichier ici.
+                  </p>
+                  <span className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 sm:w-auto">
+                    Choisir le fichier
+                  </span>
                 </div>
-                <span className="rounded-full bg-violet-600 px-5 py-2 text-sm font-medium text-white shadow-sm">
-                  Choisir un ePub
-                </span>
-              </>
-            )}
+              )}
+            </div>
           </div>
 
           {error && (
-            <div className="mt-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+            <div className="mt-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
               {error}
             </div>
           )}
@@ -199,17 +213,18 @@ export default function HomePage() {
           <div className="mt-3 rounded-2xl bg-stone-50 p-3 text-sm leading-relaxed text-stone-500 sm:mt-4 sm:p-4">
             {anthropicApiKey.trim()
               ? 'IA configurée dans ce navigateur.'
-              : 'IA non configurée : ouvrez Réglages IA pour renseigner une clé Anthropic locale.'}
+              : 'IA non configurée : utilisez Configurer l’IA pour renseigner une clé Anthropic locale.'}
           </div>
         </section>
       </main>
 
       {isSettingsOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-stone-950/30 p-3 sm:items-center sm:p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-4 shadow-2xl sm:p-5">
+          <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-[2rem] bg-white p-4 shadow-2xl sm:rounded-3xl sm:p-5">
+            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-200 sm:hidden" />
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold">Réglages IA</h2>
+                <h2 className="text-lg font-semibold">Configuration IA</h2>
                 <p className="mt-1 text-sm text-stone-500">
                   Ces réglages sont enregistrés uniquement dans ce navigateur.
                 </p>
@@ -233,7 +248,7 @@ export default function HomePage() {
                   value={anthropicApiKey}
                   onChange={event => updateAnthropicApiKey(event.target.value)}
                   placeholder="sk-ant-..."
-                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none transition-colors focus:border-violet-300"
+                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-3 text-base text-stone-800 outline-none transition-colors focus:border-violet-300 sm:py-2 sm:text-sm"
                 />
               </div>
               <div>
@@ -244,7 +259,7 @@ export default function HomePage() {
                   type="text"
                   value={anthropicModel}
                   onChange={event => updateAnthropicModel(event.target.value)}
-                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none transition-colors focus:border-violet-300"
+                  className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-3 text-base text-stone-800 outline-none transition-colors focus:border-violet-300 sm:py-2 sm:text-sm"
                 />
               </div>
               <button
@@ -252,12 +267,12 @@ export default function HomePage() {
                 onClick={() => updateAnthropicApiKey('')}
                 className="rounded-full bg-stone-100 px-4 py-2 text-sm font-medium text-stone-600 hover:bg-stone-200"
               >
-                Effacer la clé locale
+                Supprimer la clé
               </button>
             </div>
           </div>
         </div>
       )}
-      </div>
+    </div>
   );
 }

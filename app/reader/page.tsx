@@ -208,6 +208,7 @@ export default function ReaderPage() {
 
   const [explanation, setExplanation] = useState<string | null>(null);
   const [explainedParagraphIndex, setExplainedParagraphIndex] = useState<number | null>(null);
+  const [explainedParagraphIndexes, setExplainedParagraphIndexes] = useState<number[]>([]);
   const [selectedParagraphIndex, setSelectedParagraphIndex] = useState<number | null>(null);
   const [selectedParagraphIndexes, setSelectedParagraphIndexes] = useState<number[]>([]);
   const [selectionAnchorIndex, setSelectionAnchorIndex] = useState<number | null>(null);
@@ -223,6 +224,7 @@ export default function ReaderPage() {
   const [readingMode, setReadingMode] = useState<ReadingMode>('pages');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
+  const [isExplanationOpen, setIsExplanationOpen] = useState(false);
   const [cacheClearMessage, setCacheClearMessage] = useState<string | null>(null);
   const [paginatedPages, setPaginatedPages] = useState<Paragraph[][]>([]);
   const [paginationLayoutVersion, setPaginationLayoutVersion] = useState(0);
@@ -232,6 +234,14 @@ export default function ReaderPage() {
   const bookPaneRef = useRef<HTMLElement | null>(null);
   const paginationMeasureRef = useRef<HTMLDivElement | null>(null);
   const previousReadingModeRef = useRef<ReadingMode>('pages');
+
+  const rememberExplainedParagraphs = useCallback((paragraphIndexes: number[]) => {
+    if (paragraphIndexes.length === 0) return;
+
+    setExplainedParagraphIndexes(currentIndexes =>
+      Array.from(new Set([...currentIndexes, ...paragraphIndexes])).sort((a, b) => a - b)
+    );
+  }, []);
 
   // Redirect to upload if no epub is loaded
   useEffect(() => {
@@ -317,6 +327,16 @@ export default function ReaderPage() {
       setAreAiSettingsLoaded(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (!epub) return;
+
+    const cachedIndexes = epub.paragraphs
+      .filter(paragraph => getCachedExplanation(epub.title, paragraph.text))
+      .map(paragraph => paragraph.globalIndex);
+
+    setExplainedParagraphIndexes(cachedIndexes);
+  }, [epub]);
 
   const updateAnthropicApiKey = useCallback((nextApiKey: string) => {
     setAnthropicApiKey(nextApiKey);
@@ -477,7 +497,8 @@ export default function ReaderPage() {
       passageText: string,
       epubTitle: string,
       epubAuthor: string,
-      paragraphIndex: number | null
+      paragraphIndex: number | null,
+      paragraphIndexes: number[]
     ) => {
       setExplainedParagraphIndex(paragraphIndex);
 
@@ -487,6 +508,7 @@ export default function ReaderPage() {
         setExplanation(cached);
         setIsLoading(false);
         setLoadError(null);
+        rememberExplainedParagraphs(paragraphIndexes);
         return;
       }
 
@@ -514,6 +536,7 @@ export default function ReaderPage() {
           controller.signal
         );
         setCachedExplanation(epubTitle, passageText, full);
+        rememberExplainedParagraphs(paragraphIndexes);
         setIsLoading(false);
       } catch (e) {
         if ((e as Error).name === 'AbortError') return;
@@ -521,7 +544,7 @@ export default function ReaderPage() {
         setIsLoading(false);
       }
     },
-    [anthropicApiKey, anthropicModel]
+    [anthropicApiKey, anthropicModel, rememberExplainedParagraphs]
   );
 
   const resetExplanation = useCallback(() => {
@@ -534,6 +557,7 @@ export default function ReaderPage() {
     setExplainedParagraphIndex(null);
     setIsLoading(false);
     setLoadError(null);
+    setIsExplanationOpen(false);
   }, []);
 
   const buildParagraphPassage = useCallback(
@@ -562,6 +586,7 @@ export default function ReaderPage() {
   const handleClearCache = useCallback(() => {
     const deletedCount = clearExplanationCache();
     resetExplanation();
+    setExplainedParagraphIndexes([]);
     setIsSettingsOpen(false);
     setCacheClearMessage(
       deletedCount > 0
@@ -614,9 +639,23 @@ export default function ReaderPage() {
       setSelectedParagraphIndex(nextPassage.paragraphIndex);
       setSelectedPassage(nextPassage);
       setSelectionAnchorIndex(index);
+      setIsExplanationOpen(true);
+      const cachedExplanation = getCachedExplanation(epub.title, nextPassage.text);
+      if (cachedExplanation) {
+        setExplanation(cachedExplanation);
+        setExplainedParagraphIndex(nextPassage.paragraphIndex);
+        rememberExplainedParagraphs(nextPassage.paragraphIndexes);
+      }
       navigate(index);
     },
-    [buildParagraphPassage, epub, navigate, selectedParagraphIndexes, selectionAnchorIndex]
+    [
+      buildParagraphPassage,
+      epub,
+      navigate,
+      rememberExplainedParagraphs,
+      selectedParagraphIndexes,
+      selectionAnchorIndex,
+    ]
   );
 
   const explainPassage = useCallback(
@@ -627,8 +666,15 @@ export default function ReaderPage() {
       setSelectedParagraphIndex(passage.paragraphIndex);
       setSelectedParagraphIndexes(passage.paragraphIndexes);
       setSelectionAnchorIndex(passage.paragraphIndexes[passage.paragraphIndexes.length - 1] ?? null);
+      setIsExplanationOpen(true);
       if (passage.paragraphIndex !== null) navigate(passage.paragraphIndex);
-      loadExplanation(passage.text, epub.title, epub.author, passage.paragraphIndex);
+      loadExplanation(
+        passage.text,
+        epub.title,
+        epub.author,
+        passage.paragraphIndex,
+        passage.paragraphIndexes
+      );
     },
     [epub, loadExplanation, navigate]
   );
@@ -675,6 +721,7 @@ export default function ReaderPage() {
       setExplainedParagraphIndex(null);
       setIsLoading(false);
       setLoadError(null);
+      setIsExplanationOpen(true);
     });
   }, []);
 
@@ -761,7 +808,7 @@ export default function ReaderPage() {
     ? `${pageChapterTitles[0]} - ${pageChapterTitles[pageChapterTitles.length - 1]}`
     : pageChapterTitles[0];
   const headerChapterLabel = readingMode === 'pages' ? chapterLabel : currentParagraph?.chapterTitle;
-  const bookHeaderLabel = readingMode === 'pages' ? chapterLabel : 'Lecture continue';
+  const bookHeaderLabel = readingMode === 'pages' ? chapterLabel : null;
 
   const jumpToParagraph = (index: number) => {
     resetExplanation();
@@ -780,41 +827,50 @@ export default function ReaderPage() {
   return (
     <div className="flex flex-col h-screen bg-stone-50 overflow-hidden">
       {/* ── Header ── */}
-      <header className="flex-none flex flex-col gap-3 px-4 py-3 bg-white border-b border-slate-200 shadow-sm md:flex-row md:items-center md:justify-between md:px-5">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="text-xl">📖</span>
-          <div className="min-w-0">
-            <h1 className="font-semibold text-slate-900 truncate leading-tight">
+      <header className="flex-none border-b border-stone-200 bg-white px-3 py-2 shadow-sm md:flex md:items-center md:justify-between md:px-5 md:py-3">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-base md:text-lg">📖</span>
+            <div className="min-w-0">
+              <h1 className="truncate text-sm font-semibold leading-tight text-stone-900 md:text-base">
               {epub.title}
             </h1>
-            <p className="text-xs text-slate-400 truncate">{epub.author}</p>
+              <p className="hidden truncate text-[11px] text-stone-400 sm:block md:text-xs">{epub.author}</p>
+            </div>
           </div>
+          <button
+            onClick={() => router.push('/')}
+            className="flex-none rounded-full bg-stone-100 px-3 py-1.5 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-200 md:hidden"
+          >
+            Accueil
+          </button>
         </div>
-        <div className="flex w-full flex-none items-center gap-2 overflow-x-auto pb-1 md:w-auto md:gap-3 md:overflow-visible md:pb-0">
-          <div className="relative">
+        <div className="mt-2 flex w-full items-center gap-2 md:mt-0 md:w-auto md:flex-none md:gap-3">
+          <div className="relative min-w-0 flex-1">
             <button
               type="button"
               onClick={() => {
                 setIsTocOpen(isOpen => !isOpen);
                 setIsSettingsOpen(false);
               }}
-              className="flex max-w-64 items-center gap-2 rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-600 shadow-sm transition-colors hover:bg-white hover:text-stone-800"
+              className="flex h-9 w-full min-w-0 items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-left text-xs font-medium text-stone-600 shadow-sm transition-colors hover:bg-white hover:text-stone-800 md:h-auto md:max-w-64 md:rounded-full md:py-1.5"
               aria-expanded={isTocOpen}
               aria-haspopup="dialog"
             >
-              <span className="text-stone-400">Sommaire</span>
+              <span className="text-stone-400">Chapitres</span>
               <span className="truncate text-stone-800">{headerChapterLabel}</span>
             </button>
             {isTocOpen && (
               <div
                 role="dialog"
-                aria-label="Sommaire du livre"
-                className="fixed left-3 right-3 top-24 z-40 overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl md:absolute md:left-0 md:right-auto md:top-auto md:mt-2 md:w-[26rem]"
+                aria-label="Liste des chapitres"
+                className="fixed inset-x-0 bottom-0 top-auto z-40 max-h-[82dvh] overflow-hidden rounded-t-[1.75rem] border border-stone-200 bg-white shadow-2xl md:absolute md:bottom-auto md:left-0 md:right-auto md:top-auto md:mt-2 md:max-h-none md:w-[26rem] md:rounded-2xl"
               >
+                <div className="mx-auto mt-3 h-1 w-10 rounded-full bg-stone-200 md:hidden" />
                 <div className="border-b border-stone-100 px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-stone-900">Sommaire</p>
+                      <p className="text-sm font-semibold text-stone-900">Chapitres</p>
                       <p className="text-xs text-stone-400">
                         {chapterOptions.length} chapitre{chapterOptions.length > 1 ? 's' : ''}
                       </p>
@@ -828,7 +884,7 @@ export default function ReaderPage() {
                     </button>
                   </div>
                 </div>
-                <div className="max-h-[min(70vh,30rem)] overflow-y-auto p-2">
+                <div className="max-h-[68dvh] overflow-y-auto p-2 md:max-h-[min(70vh,30rem)]">
                   {chapterOptions.map((chapter, index) => {
                     const isCurrentChapter = chapter.firstIndex === currentChapterStartIndex;
                     const chapterPage = getPageIndexForParagraph(pages, chapter.firstIndex) + 1;
@@ -876,14 +932,14 @@ export default function ReaderPage() {
             )}
           </div>
           <div
-            className="flex items-center rounded-full border border-stone-200 bg-stone-50 p-1 text-xs font-medium shadow-sm"
+            className="flex h-9 flex-none items-center rounded-2xl border border-stone-200 bg-stone-50 p-1 text-xs font-medium shadow-sm md:h-auto md:rounded-full"
             aria-label="Mode de lecture"
           >
             <button
               type="button"
               onClick={() => updateReadingMode('pages')}
               className={[
-                'rounded-full px-3 py-1 transition-colors',
+                'rounded-xl px-3 py-1.5 transition-colors md:rounded-full md:py-1',
                 readingMode === 'pages'
                   ? 'bg-white text-violet-700 shadow-sm'
                   : 'text-stone-500 hover:bg-white/70',
@@ -895,17 +951,17 @@ export default function ReaderPage() {
               type="button"
               onClick={() => updateReadingMode('scroll')}
               className={[
-                'rounded-full px-3 py-1 transition-colors',
+                'rounded-xl px-3 py-1.5 transition-colors md:rounded-full md:py-1',
                 readingMode === 'scroll'
                   ? 'bg-white text-violet-700 shadow-sm'
                   : 'text-stone-500 hover:bg-white/70',
               ].join(' ')}
             >
-              Scroll
+              Continu
             </button>
           </div>
           <div
-            className="flex items-center rounded-full border border-stone-200 bg-stone-50 p-1 shadow-sm"
+            className="hidden items-center justify-center rounded-full border border-stone-200 bg-stone-50 p-1 shadow-sm md:flex"
             aria-label="Réglage de la taille du texte"
           >
             <button
@@ -913,19 +969,19 @@ export default function ReaderPage() {
               onClick={() => updateBookFontSize(bookFontSize - BOOK_FONT_SIZE_STEP)}
               disabled={bookFontSize <= MIN_BOOK_FONT_SIZE}
               aria-label="Réduire la taille du texte"
-              className="rounded-full px-3 py-1 text-xs font-semibold text-stone-500 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-35"
+              className="rounded-xl px-3 py-1.5 text-xs font-semibold text-stone-500 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-35 md:rounded-full md:py-1"
             >
               A−
             </button>
             <span className="px-2 font-serif text-sm text-stone-700" aria-hidden="true">
-              Aa
+              Options
             </span>
             <button
               type="button"
               onClick={() => updateBookFontSize(bookFontSize + BOOK_FONT_SIZE_STEP)}
               disabled={bookFontSize >= MAX_BOOK_FONT_SIZE}
               aria-label="Augmenter la taille du texte"
-              className="rounded-full px-3 py-1 text-base font-semibold text-stone-700 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-35"
+              className="rounded-xl px-3 py-1.5 text-base font-semibold text-stone-700 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-35 md:rounded-full md:py-1"
             >
               A+
             </button>
@@ -935,7 +991,7 @@ export default function ReaderPage() {
               type="button"
               onClick={() => setIsSettingsOpen(isOpen => !isOpen)}
               className={[
-                'rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition-colors hover:bg-white',
+                'h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-auto md:rounded-full md:py-1.5',
                 anthropicApiKey.trim()
                   ? 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800'
                   : 'border-amber-200 bg-amber-50 text-amber-800 hover:text-amber-950',
@@ -943,14 +999,46 @@ export default function ReaderPage() {
               aria-expanded={isSettingsOpen}
               aria-haspopup="menu"
             >
-              ⚙ Réglages IA
+              Aa
             </button>
             {isSettingsOpen && (
               <div
                 role="menu"
-                className="fixed left-3 right-3 top-24 z-40 rounded-2xl border border-stone-200 bg-white p-3 text-sm shadow-xl md:absolute md:left-auto md:right-0 md:top-auto md:mt-2 md:w-80"
+                className="fixed inset-x-0 bottom-0 z-40 max-h-[86dvh] overflow-y-auto rounded-t-[1.75rem] border border-stone-200 bg-white p-4 text-sm shadow-2xl md:absolute md:bottom-auto md:left-auto md:right-0 md:top-auto md:mt-2 md:w-80 md:rounded-2xl md:p-3"
               >
+                <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-200 md:hidden" />
                 <div className="space-y-3 border-b border-stone-100 pb-3">
+                  <div className="md:hidden">
+                    <p className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
+                      Taille du texte
+                    </p>
+                    <div
+                      className="mt-2 flex items-center justify-between rounded-2xl border border-stone-200 bg-stone-50 p-1 shadow-sm"
+                      aria-label="Réglage de la taille du texte"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => updateBookFontSize(bookFontSize - BOOK_FONT_SIZE_STEP)}
+                        disabled={bookFontSize <= MIN_BOOK_FONT_SIZE}
+                        aria-label="Réduire la taille du texte"
+                        className="rounded-xl px-4 py-2 text-sm font-semibold text-stone-500 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-35"
+                      >
+                        A−
+                      </button>
+                      <span className="px-2 font-serif text-base text-stone-700" aria-hidden="true">
+                        Aa
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => updateBookFontSize(bookFontSize + BOOK_FONT_SIZE_STEP)}
+                        disabled={bookFontSize >= MAX_BOOK_FONT_SIZE}
+                        aria-label="Augmenter la taille du texte"
+                        className="rounded-xl px-4 py-2 text-lg font-semibold text-stone-700 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-35"
+                      >
+                        A+
+                      </button>
+                    </div>
+                  </div>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
                       Clé Anthropic locale
@@ -960,7 +1048,7 @@ export default function ReaderPage() {
                       value={anthropicApiKey}
                       onChange={event => updateAnthropicApiKey(event.target.value)}
                       placeholder="sk-ant-..."
-                      className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none transition-colors focus:border-violet-300"
+                      className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-3 text-base text-stone-800 outline-none transition-colors focus:border-violet-300 md:py-2 md:text-sm"
                     />
                     <p className="mt-1 text-xs leading-relaxed text-stone-400">
                       Stockée dans ce navigateur. Nécessaire sur GitHub Pages.
@@ -974,7 +1062,7 @@ export default function ReaderPage() {
                       type="text"
                       value={anthropicModel}
                       onChange={event => updateAnthropicModel(event.target.value)}
-                      className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none transition-colors focus:border-violet-300"
+                      className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-3 text-base text-stone-800 outline-none transition-colors focus:border-violet-300 md:py-2 md:text-sm"
                     />
                   </div>
                   <button
@@ -982,7 +1070,7 @@ export default function ReaderPage() {
                     onClick={() => updateAnthropicApiKey('')}
                     className="rounded-full px-3 py-1.5 text-xs font-medium text-stone-500 transition-colors hover:bg-stone-50 hover:text-stone-700"
                   >
-                    Effacer la clé locale
+                  Supprimer la clé
                   </button>
                 </div>
                 <button
@@ -991,7 +1079,7 @@ export default function ReaderPage() {
                   onClick={handleClearCache}
                   className="mt-2 w-full rounded-xl px-3 py-2 text-left text-stone-700 transition-colors hover:bg-stone-50"
                 >
-                  <span className="block font-medium">Vider le cache des explications</span>
+                  <span className="block font-medium">Supprimer les commentaires enregistrés</span>
                   <span className="mt-0.5 block text-xs leading-relaxed text-stone-400">
                     Les commentaires IA seront régénérés à la demande.
                   </span>
@@ -1001,16 +1089,16 @@ export default function ReaderPage() {
           </div>
           <button
             onClick={() => router.push('/')}
-            className="text-xs text-slate-400 hover:text-slate-700 transition-colors whitespace-nowrap"
+            className="hidden text-xs text-slate-400 transition-colors hover:text-slate-700 md:block"
           >
-            ← Changer de livre
+            ← Accueil
           </button>
         </div>
       </header>
 
       {/* ── Chapter label ── */}
       {headerChapterLabel && (
-        <div className="flex-none px-5 py-2 bg-stone-100 border-b border-stone-200 text-xs text-stone-500 font-medium uppercase tracking-wide">
+        <div className="hidden flex-none border-b border-stone-200 bg-stone-100 px-5 py-2 text-xs font-medium uppercase tracking-wide text-stone-500 md:block">
           {headerChapterLabel}
         </div>
       )}
@@ -1020,9 +1108,10 @@ export default function ReaderPage() {
         </div>
       )}
       {areAiSettingsLoaded && !anthropicApiKey.trim() && (
-        <div className="flex flex-none items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-5 py-2 text-xs text-amber-800">
-          <span>
-            IA non configurée dans ce navigateur. Renseignez une clé Anthropic locale dans les réglages.
+        <div className="flex flex-none items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 md:px-5">
+          <span className="min-w-0">
+            IA non configurée.
+            <span className="hidden sm:inline"> Renseignez une clé Anthropic locale dans les réglages.</span>
           </span>
           <button
             type="button"
@@ -1030,9 +1119,9 @@ export default function ReaderPage() {
               setIsSettingsOpen(true);
               setIsTocOpen(false);
             }}
-            className="flex-none rounded-full bg-white px-3 py-1 font-medium text-amber-900 shadow-sm transition-colors hover:bg-amber-100"
+            className="flex-none rounded-full bg-white px-3 py-1.5 font-medium text-amber-900 shadow-sm transition-colors hover:bg-amber-100"
           >
-            Ouvrir les réglages
+            Configurer
           </button>
         </div>
       )}
@@ -1041,55 +1130,98 @@ export default function ReaderPage() {
       <main
         ref={mainRef}
         className={[
-          'flex-1 flex flex-col-reverse md:flex-row overflow-hidden',
+          'relative flex-1 overflow-hidden md:flex md:flex-row',
           isResizingSplit ? 'select-none cursor-col-resize' : '',
         ].join(' ')}
         style={{ '--reader-split-percent': `${splitPercent}%` } as CSSProperties}
       >
+        {isExplanationOpen && (
+          <button
+            type="button"
+            aria-label="Fermer l'explication"
+            onClick={() => setIsExplanationOpen(false)}
+            className="fixed inset-0 z-20 bg-stone-950/25 md:hidden"
+          />
+        )}
         {/* Left: AI explanation (appears bottom on mobile, left on desktop) */}
         <section
-          aria-label="Explication IA"
-          className="reader-explanation-pane flex-1 md:flex-none overflow-y-auto panel-scroll bg-stone-100 border-t md:border-t-0 border-stone-200 px-6 md:px-10 py-8"
+          aria-label="Commentaire IA"
+          className={[
+            'reader-explanation-pane fixed inset-x-0 bottom-0 z-30 max-h-[62dvh] overflow-y-auto rounded-t-[1.35rem] border-t border-stone-200 bg-stone-100 px-3 py-2 shadow-2xl transition-transform duration-200 md:relative md:inset-auto md:z-auto md:max-h-none md:flex-none md:translate-y-0 md:rounded-none md:border-t-0 md:px-10 md:py-8 md:shadow-none',
+            isExplanationOpen ? 'translate-y-0' : 'translate-y-full',
+          ].join(' ')}
         >
-          <div className="max-w-prose mx-auto">
-            <div className="flex items-center gap-2 mb-5">
-              <span className="text-violet-500 text-lg">✨</span>
-              <h2 className="text-xs font-semibold uppercase tracking-widest text-violet-500">
-                Explication à la demande
-              </h2>
+          <div className="mx-auto mb-1.5 h-1 w-10 rounded-full bg-stone-300 md:hidden" />
+          <div className="mx-auto max-w-prose">
+            <div className="sticky -top-2 z-10 -mx-3 mb-2 flex items-center justify-between gap-3 border-b border-stone-200 bg-stone-100/95 px-3 py-2 backdrop-blur md:static md:mx-0 md:mb-5 md:border-b-0 md:bg-transparent md:p-0 md:backdrop-blur-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-violet-500 md:text-lg">✨</span>
+                <div>
+                  <h2 className="text-sm font-semibold leading-tight text-stone-900 md:text-xs md:uppercase md:tracking-widest md:text-violet-500">
+                    Commentaire
+                  </h2>
+                  <p className="text-[11px] text-stone-400 md:hidden">
+                    {selectedPassage?.label ?? 'Aucune sélection'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsExplanationOpen(false)}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-medium text-stone-500 shadow-sm md:hidden"
+              >
+                Fermer
+              </button>
             </div>
 
-            <div className="mb-5 rounded-xl border border-violet-100 bg-white p-4">
-              <p className="text-xs font-semibold uppercase tracking-widest text-violet-500">
-                {selectedPassage?.label ?? 'Sélection'}
-              </p>
-              <p className="mt-2 line-clamp-4 font-serif text-sm leading-relaxed text-stone-600">
-                {selectedPassage?.text ?? 'Sélectionnez un paragraphe, quelques lignes ou plusieurs paragraphes.'}
-              </p>
-              {selectedPassage && (
+            <div className="mb-2 rounded-2xl border border-violet-100 bg-white p-3 shadow-sm md:mb-5 md:p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="hidden text-xs font-semibold uppercase tracking-widest text-violet-500 md:block">
+                    {selectedPassage?.label ?? 'Sélection'}
+                  </p>
+                  <p className="line-clamp-1 font-serif text-sm leading-relaxed text-stone-600 md:mt-2 md:line-clamp-4">
+                    {selectedPassage?.text ?? 'Sélectionnez un passage du livre.'}
+                  </p>
+                </div>
+                {selectedPassage && (
+                  <button
+                    type="button"
+                    onClick={() => resetExplanation()}
+                    className="flex-none rounded-full bg-stone-50 px-2.5 py-1 text-xs font-medium text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700"
+                  >
+                    Désélectionner
+                  </button>
+                )}
+              </div>
+              {selectedPassage ? (
                 <button
                   type="button"
                   onClick={() => explainPassage(selectedPassage)}
                   disabled={isLoading}
-                  className="mt-4 inline-flex items-center rounded-full bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:cursor-wait disabled:bg-violet-300"
+                  className="mt-2 flex w-full items-center justify-center rounded-2xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-violet-700 disabled:cursor-wait disabled:bg-violet-300 md:mt-3 md:inline-flex md:w-auto md:rounded-full md:py-2"
                 >
                   {isLoading
                     ? 'Génération...'
                     : selectedPassage.paragraphIndex === null
-                      ? 'Expliquer la sélection'
-                      : 'Expliquer ce paragraphe'}
+                      ? 'Commenter la sélection'
+                      : 'Commenter ce paragraphe'}
                 </button>
+              ) : (
+                <p className="mt-2 rounded-xl bg-stone-50 px-3 py-2 text-xs leading-relaxed text-stone-500">
+                  Touchez un paragraphe, ou sélectionnez quelques lignes.
+                </p>
               )}
             </div>
 
             {isLoading && !explanation && <ExplanationSkeleton />}
 
             {loadError && (
-              <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-600">
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-600 md:p-4">
                 {loadError}
                 <button
                   onClick={() => selectedPassage && explainPassage(selectedPassage)}
-                  className="mt-2 block text-red-700 underline hover:no-underline"
+                  className="mt-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-red-700 shadow-sm hover:bg-red-100"
                 >
                   Réessayer
                 </button>
@@ -1097,7 +1229,7 @@ export default function ReaderPage() {
             )}
 
             {explanation && (
-              <div className="analysis-markdown rounded-2xl bg-white p-5 text-stone-700 shadow-sm">
+              <div className="analysis-markdown rounded-2xl bg-white p-4 text-stone-700 shadow-sm md:p-5">
                 <ReactMarkdown>{explanation}</ReactMarkdown>
                 {isLoading && (
                   <span className="inline-block w-0.5 h-4 ml-0.5 bg-violet-400 animate-pulse align-middle" />
@@ -1106,9 +1238,8 @@ export default function ReaderPage() {
             )}
 
             {!isLoading && !loadError && !explanation && (
-              <div className="rounded-xl border border-dashed border-stone-200 bg-white/70 p-5 text-sm leading-relaxed text-stone-500">
-                Sélectionnez du texte librement, cliquez un paragraphe, utilisez Cmd/Ctrl+clic
-                pour en ajouter, ou Shift+clic pour sélectionner une plage.
+              <div className="hidden rounded-xl border border-dashed border-stone-200 bg-white/70 p-3 text-sm leading-relaxed text-stone-500 md:block md:p-5">
+                Astuce : Cmd/Ctrl+clic ajoute un paragraphe, Shift+clic sélectionne une plage.
               </div>
             )}
           </div>
@@ -1141,23 +1272,26 @@ export default function ReaderPage() {
           onScroll={updateCurrentParagraphFromScroll}
           onMouseUp={captureTextSelection}
           onTouchEnd={captureTextSelection}
-          className="reader-book-pane relative flex-1 md:flex-none overflow-y-auto panel-scroll bg-stone-200/70 px-4 py-6 md:px-8 md:py-10"
+          className="reader-book-pane relative h-full overflow-y-auto bg-[#fffdf7] px-0 py-0 md:flex-none md:bg-stone-200/70 md:px-8 md:py-10"
         >
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-3xl md:h-auto">
             {displayedParagraphs.length > 0 ? (
               <div
-                className="book-page min-h-full rounded-sm px-8 py-10 md:px-16 md:py-16"
+                className="book-page min-h-full rounded-none px-5 py-6 md:rounded-sm md:px-16 md:py-16"
                 style={{ '--book-font-size': `${bookFontSize}px` } as CSSProperties}
               >
-                <div className="mb-10 border-b border-stone-200 pb-4 text-center">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.35em] text-stone-400">
-                    {bookHeaderLabel}
-                  </p>
-                </div>
+                {bookHeaderLabel && (
+                  <div className="mb-6 border-b border-stone-200 pb-3 text-center md:mb-10 md:pb-4">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-stone-400 md:text-[11px] md:tracking-[0.35em]">
+                      {bookHeaderLabel}
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-0">
                   {displayedParagraphs.map((item, index) => {
                     const isSelected = selectedParagraphIndexes.includes(item.globalIndex);
                     const isExplaining = isLoading && explainedParagraphIndex === item.globalIndex;
+                    const hasExplanation = explainedParagraphIndexes.includes(item.globalIndex);
                     const previousParagraph = displayedParagraphs[index - 1];
                     const shouldShowChapterSeparator =
                       readingMode === 'scroll' && item.chapterTitle !== previousParagraph?.chapterTitle;
@@ -1191,15 +1325,23 @@ export default function ReaderPage() {
                             selectParagraph(item.globalIndex);
                           }}
                           className={[
-                            'book-paragraph-block relative rounded-lg px-4 py-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-300',
+                            'book-paragraph-block relative rounded-lg px-0 py-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-300 md:px-4',
                             isSelected
                               ? 'book-paragraph-active'
+                              : '',
+                            hasExplanation
+                              ? 'book-paragraph-explained'
                               : '',
                           ].join(' ')}
                         >
                           <p className="book-paragraph block w-full text-left">
                             {item.text}
                           </p>
+                          {hasExplanation && (
+                            <div className="book-explained-badge">
+                              Commenté
+                            </div>
+                          )}
                           <div className="book-explain-action transition-opacity">
                             <button
                               type="button"
@@ -1210,7 +1352,11 @@ export default function ReaderPage() {
                               disabled={isExplaining}
                               className="rounded-full border border-stone-300 bg-[#fffdf7]/95 px-4 py-2 text-xs font-medium text-violet-700 shadow-sm transition-colors hover:border-violet-300 hover:bg-violet-50 disabled:cursor-wait disabled:text-violet-300 md:px-3 md:py-1.5"
                             >
-                              {isExplaining ? 'Génération...' : 'Expliquer'}
+                              {isExplaining
+                                ? 'Génération...'
+                                : hasExplanation
+                                  ? 'Ouvrir'
+                                  : 'Commenter'}
                             </button>
                           </div>
                         </article>
@@ -1255,9 +1401,22 @@ export default function ReaderPage() {
         </section>
       </main>
 
+      {selectedPassage && !isExplanationOpen && (
+        <button
+          type="button"
+          onClick={() => setIsExplanationOpen(true)}
+          className={[
+            'fixed right-3 z-20 rounded-full bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-xl shadow-violet-900/20 md:hidden',
+            readingMode === 'pages' ? 'bottom-16' : 'bottom-4',
+          ].join(' ')}
+        >
+          Commentaire
+        </button>
+      )}
+
       {/* ── Navigation footer ── */}
       {readingMode === 'pages' && (
-        <footer className="flex-none flex items-center justify-between gap-4 px-5 py-3 bg-white border-t border-slate-200">
+        <footer className="flex-none flex items-center justify-between gap-2 border-t border-slate-200 bg-white px-3 py-2 md:gap-4 md:px-5 md:py-3">
           <button
             onClick={() => {
               const previousPage = pages[currentPage - 1];
@@ -1268,11 +1427,11 @@ export default function ReaderPage() {
             }}
             disabled={isFirst}
             aria-label="Page précédente"
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all
+            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium transition-all md:px-4
               disabled:opacity-30 disabled:cursor-not-allowed
               enabled:text-slate-700 enabled:hover:bg-slate-100 enabled:active:bg-slate-200"
           >
-            ← Précédent
+            ← <span className="hidden sm:inline">Précédent</span>
           </button>
 
           <span className="text-xs text-slate-400 tabular-nums">
@@ -1289,11 +1448,11 @@ export default function ReaderPage() {
             }}
             disabled={isLast}
             aria-label="Page suivante"
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all
+            className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium transition-all md:px-4
               disabled:opacity-30 disabled:cursor-not-allowed
               enabled:text-slate-700 enabled:hover:bg-slate-100 enabled:active:bg-slate-200"
           >
-            Suivant →
+            <span className="hidden sm:inline">Suivant</span> →
           </button>
         </footer>
       )}
