@@ -134,7 +134,7 @@ export default function HomePage() {
             onClick={() => setIsSettingsOpen(true)}
             className="flex-none rounded-full border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 shadow-sm transition-colors hover:border-violet-200 hover:text-violet-700 sm:px-4 sm:text-sm"
           >
-            Clé IA
+            Options
           </button>
         </div>
       </header>
@@ -314,9 +314,9 @@ export default function HomePage() {
             <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-200 sm:hidden" />
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold">Clé IA locale</h2>
+                <h2 className="text-lg font-semibold">Options</h2>
                 <p className="mt-1 text-sm text-stone-500">
-                  Enregistrée sur cet appareil, jamais intégrée au code public.
+                  Clé IA enregistrée sur cet appareil, jamais intégrée au code public.
                 </p>
               </div>
               <button

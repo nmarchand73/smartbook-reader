@@ -79,6 +79,14 @@
     box-shadow: inset 3px 0 0 rgba(124, 58, 237, 0.45);
   }
 
+  .book-sentence-speaking {
+    background: rgba(250, 204, 21, 0.28);
+    border-radius: 0.25rem;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 0.05rem 0.12rem;
+  }
+
   .book-paragraph-explained:not(.book-paragraph-active) {
     box-shadow: inset 2px 0 0 rgba(168, 162, 158, 0.55);
   }

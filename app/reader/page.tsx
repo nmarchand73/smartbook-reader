@@ -31,11 +31,16 @@ const MAX_SPLIT_PERCENT = 64;
 const READING_MODE_STORAGE_KEY = 'sbr_reader_mode';
 const ANTHROPIC_API_KEY_STORAGE_KEY = 'sbr_anthropic_api_key';
 const ANTHROPIC_MODEL_STORAGE_KEY = 'sbr_anthropic_model';
+const SPEECH_RATE_STORAGE_KEY = 'sbr_speech_rate';
+const SPEECH_LANGUAGE_STORAGE_KEY = 'sbr_speech_language';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
+const DEFAULT_SPEECH_RATE = 0.9;
 const MAX_OUTPUT_TOKENS = 900;
 const COMMENT_DRAWER_DRAG_THRESHOLD = 40;
 
 type ReadingMode = 'pages' | 'scroll';
+type SpeechStatus = 'idle' | 'speaking' | 'paused';
+type SpeechLanguageMode = 'auto' | 'fr-FR' | 'en-US';
 interface ChapterOption {
   title: string;
   firstIndex: number;
@@ -49,6 +54,11 @@ interface SelectedPassage {
   label: string;
   paragraphIndex: number | null;
   paragraphIndexes: number[];
+}
+interface SpeechSegment {
+  text: string;
+  paragraphIndex: number | null;
+  sentenceIndex: number | null;
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -104,6 +114,53 @@ function extractAnthropicText(responseBody: unknown): string {
       return '';
     })
     .join('');
+}
+
+function detectSpeechLanguage(text: string): string {
+  const sample = text.slice(0, 1200).toLowerCase();
+  const frenchMatches = (
+    sample.match(/\b(le|la|les|des|une|dans|avec|pour|que|qui|est|pas|plus|vous|nous|sur)\b/g) ?? []
+  ).length;
+  const englishMatches = (
+    sample.match(/\b(the|and|that|with|for|you|not|this|from|have|are|was|were|his|her)\b/g) ?? []
+  ).length;
+
+  return englishMatches > frenchMatches ? 'en-US' : 'fr-FR';
+}
+
+function findSpeechVoice(language: string): SpeechSynthesisVoice | null {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+
+  const voices = window.speechSynthesis.getVoices();
+  const languagePrefix = language.split('-')[0];
+
+  return (
+    voices.find(voice => voice.lang === language) ??
+    voices.find(voice => voice.lang.startsWith(`${languagePrefix}-`)) ??
+    null
+  );
+}
+
+function splitIntoSentences(text: string): string[] {
+  const normalizedText = text.replace(/\s+/g, ' ').trim();
+  if (!normalizedText) return [];
+
+  try {
+    if ('Segmenter' in Intl) {
+      const segmenter = new Intl.Segmenter(undefined, { granularity: 'sentence' });
+      const segments = Array.from(segmenter.segment(normalizedText), segment =>
+        segment.segment.trim()
+      ).filter(Boolean);
+      if (segments.length > 0) return segments;
+    }
+  } catch {
+    // Fall through to regex segmentation.
+  }
+
+  return normalizedText
+    .split(/(?<=[.!?…])\s+/)
+    .map(sentence => sentence.trim())
+    .filter(Boolean);
 }
 
 // ── Streaming fetch helper ────────────────────────────────────────────────────
@@ -250,6 +307,10 @@ export default function ReaderPage() {
   const [isTocOpen, setIsTocOpen] = useState(false);
   const [isExplanationOpen, setIsExplanationOpen] = useState(false);
   const [isExplanationExpanded, setIsExplanationExpanded] = useState(false);
+  const [speechStatus, setSpeechStatus] = useState<SpeechStatus>('idle');
+  const [activeSpeechSegment, setActiveSpeechSegment] = useState<SpeechSegment | null>(null);
+  const [speechRate, setSpeechRate] = useState(DEFAULT_SPEECH_RATE);
+  const [speechLanguageMode, setSpeechLanguageMode] = useState<SpeechLanguageMode>('auto');
   const [cacheClearMessage, setCacheClearMessage] = useState<string | null>(null);
   const [paginatedPages, setPaginatedPages] = useState<Paragraph[][]>([]);
   const [paginationLayoutVersion, setPaginationLayoutVersion] = useState(0);
@@ -261,6 +322,8 @@ export default function ReaderPage() {
   const previousReadingModeRef = useRef<ReadingMode>('pages');
   const currentChapterButtonRef = useRef<HTMLButtonElement | null>(null);
   const explanationDrawerDragStartYRef = useRef<number | null>(null);
+  const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const speechSegmentsRef = useRef<SpeechSegment[]>([]);
 
   const rememberExplainedParagraphs = useCallback((paragraphIndexes: number[]) => {
     if (paragraphIndexes.length === 0) return;
@@ -268,6 +331,16 @@ export default function ReaderPage() {
     setExplainedParagraphIndexes(currentIndexes =>
       Array.from(new Set([...currentIndexes, ...paragraphIndexes])).sort((a, b) => a - b)
     );
+  }, []);
+
+  const stopSpeech = useCallback(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    window.speechSynthesis.cancel();
+    speechUtteranceRef.current = null;
+    speechSegmentsRef.current = [];
+    setActiveSpeechSegment(null);
+    setSpeechStatus('idle');
   }, []);
 
   // Redirect to upload if no epub is loaded
@@ -346,6 +419,26 @@ export default function ReaderPage() {
 
   useEffect(() => {
     try {
+      const storedSpeechRate = Number(localStorage.getItem(SPEECH_RATE_STORAGE_KEY));
+      if (Number.isFinite(storedSpeechRate)) {
+        setSpeechRate(clampNumber(storedSpeechRate, 0.7, 1.4));
+      }
+
+      const storedSpeechLanguage = localStorage.getItem(SPEECH_LANGUAGE_STORAGE_KEY);
+      if (
+        storedSpeechLanguage === 'auto' ||
+        storedSpeechLanguage === 'fr-FR' ||
+        storedSpeechLanguage === 'en-US'
+      ) {
+        setSpeechLanguageMode(storedSpeechLanguage);
+      }
+    } catch {
+      // Keep default speech settings when localStorage is unavailable.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
       setAnthropicApiKey(localStorage.getItem(ANTHROPIC_API_KEY_STORAGE_KEY) ?? '');
       setAnthropicModel(localStorage.getItem(ANTHROPIC_MODEL_STORAGE_KEY) ?? DEFAULT_ANTHROPIC_MODEL);
     } catch {
@@ -389,6 +482,25 @@ export default function ReaderPage() {
     }
   }, []);
 
+  const updateSpeechRate = useCallback((nextRate: number) => {
+    const clampedRate = clampNumber(nextRate, 0.7, 1.4);
+    setSpeechRate(clampedRate);
+    try {
+      localStorage.setItem(SPEECH_RATE_STORAGE_KEY, clampedRate.toString());
+    } catch {
+      // Speech rate still updates for the current session.
+    }
+  }, []);
+
+  const updateSpeechLanguageMode = useCallback((nextMode: SpeechLanguageMode) => {
+    setSpeechLanguageMode(nextMode);
+    try {
+      localStorage.setItem(SPEECH_LANGUAGE_STORAGE_KEY, nextMode);
+    } catch {
+      // Speech language still updates for the current session.
+    }
+  }, []);
+
   const getVisibleParagraphIndex = useCallback(() => {
     const bookPane = bookPaneRef.current;
     if (!bookPane) return currentIndex;
@@ -409,6 +521,7 @@ export default function ReaderPage() {
   const updateReadingMode = useCallback((nextMode: ReadingMode) => {
     if (nextMode === readingMode) return;
 
+    stopSpeech();
     const anchorIndex = readingMode === 'scroll'
       ? getVisibleParagraphIndex()
       : currentIndex;
@@ -422,7 +535,7 @@ export default function ReaderPage() {
     } catch {
       // Reading mode still updates for the current session.
     }
-  }, [currentIndex, getVisibleParagraphIndex, navigate, readingMode]);
+  }, [currentIndex, getVisibleParagraphIndex, navigate, readingMode, stopSpeech]);
 
   const handleSplitResizeStart = useCallback((event: PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -782,8 +895,9 @@ export default function ReaderPage() {
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      stopSpeech();
     };
-  }, []);
+  }, [stopSpeech]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -797,6 +911,7 @@ export default function ReaderPage() {
         if (!nextPage) return;
 
         resetExplanation();
+        stopSpeech();
         navigate(nextPage[0].globalIndex);
         requestAnimationFrame(() => {
           bookPaneRef.current?.scrollTo({ top: 0 });
@@ -807,6 +922,7 @@ export default function ReaderPage() {
         if (!previousPage) return;
 
         resetExplanation();
+        stopSpeech();
         navigate(previousPage[0].globalIndex);
         requestAnimationFrame(() => {
           bookPaneRef.current?.scrollTo({ top: 0 });
@@ -815,7 +931,7 @@ export default function ReaderPage() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentIndex, navigate, paginatedPages, readingMode, resetExplanation]);
+  }, [currentIndex, navigate, paginatedPages, readingMode, resetExplanation, stopSpeech]);
 
   useEffect(() => {
     const previousReadingMode = previousReadingModeRef.current;
@@ -903,9 +1019,103 @@ export default function ReaderPage() {
     : pageChapterTitles[0];
   const headerChapterLabel = readingMode === 'pages' ? chapterLabel : currentParagraph?.chapterTitle;
   const bookHeaderLabel = readingMode === 'pages' ? chapterLabel : null;
+  const speechButtonLabel = speechStatus === 'speaking'
+    ? 'Pause'
+    : speechStatus === 'paused'
+      ? 'Reprendre'
+      : selectedPassage
+        ? 'Lire la sélection'
+        : 'Lire';
+
+  const buildSpeechSegments = (): SpeechSegment[] => {
+    const paragraphSources = selectedPassage?.paragraphIndexes.length
+      ? selectedPassage.paragraphIndexes
+        .map(index => epub.paragraphs[index])
+        .filter((paragraph): paragraph is Paragraph => Boolean(paragraph))
+      : readingMode === 'pages'
+        ? pageParagraphs
+        : currentParagraph
+          ? [currentParagraph]
+          : [];
+
+    if (paragraphSources.length > 0) {
+      return paragraphSources.flatMap(paragraph =>
+        splitIntoSentences(paragraph.text).map((sentence, sentenceIndex) => ({
+          text: sentence,
+          paragraphIndex: paragraph.globalIndex,
+          sentenceIndex,
+        }))
+      );
+    }
+
+    return splitIntoSentences(selectedPassage?.text ?? '').map((sentence, sentenceIndex) => ({
+      text: sentence,
+      paragraphIndex: null,
+      sentenceIndex,
+    }));
+  };
+
+  const speakSegment = (segmentIndex: number) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    const segment = speechSegmentsRef.current[segmentIndex];
+    if (!segment) {
+      speechUtteranceRef.current = null;
+      setActiveSpeechSegment(null);
+      setSpeechStatus('idle');
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(segment.text);
+    const speechLanguage = speechLanguageMode === 'auto'
+      ? detectSpeechLanguage(segment.text)
+      : speechLanguageMode;
+    const speechVoice = findSpeechVoice(speechLanguage);
+    utterance.lang = speechVoice?.lang ?? speechLanguage;
+    if (speechVoice) utterance.voice = speechVoice;
+    utterance.rate = speechRate;
+    utterance.onstart = () => setActiveSpeechSegment(segment);
+    utterance.onend = () => speakSegment(segmentIndex + 1);
+    utterance.onerror = () => {
+      speechUtteranceRef.current = null;
+      setActiveSpeechSegment(null);
+      setSpeechStatus('idle');
+    };
+    speechUtteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const toggleSpeech = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      setCacheClearMessage('Lecture vocale non disponible dans ce navigateur.');
+      return;
+    }
+
+    if (speechStatus === 'speaking') {
+      window.speechSynthesis.pause();
+      setSpeechStatus('paused');
+      return;
+    }
+
+    if (speechStatus === 'paused') {
+      window.speechSynthesis.resume();
+      setSpeechStatus('speaking');
+      return;
+    }
+
+    const segments = buildSpeechSegments();
+    if (segments.length === 0) return;
+
+    window.speechSynthesis.cancel();
+    speechSegmentsRef.current = segments;
+    setActiveSpeechSegment(null);
+    setSpeechStatus('speaking');
+    speakSegment(0);
+  };
 
   const jumpToParagraph = (index: number) => {
     resetExplanation();
+    stopSpeech();
     setIsTocOpen(false);
     navigate(index);
 
@@ -926,6 +1136,7 @@ export default function ReaderPage() {
     if (!targetPage?.[0]) return;
 
     resetExplanation();
+    stopSpeech();
     navigate(targetPage[0].globalIndex);
     requestAnimationFrame(() => {
       bookPaneRef.current?.scrollTo({ top: 0 });
@@ -1074,6 +1285,19 @@ export default function ReaderPage() {
               Continu
             </button>
           </div>
+          <button
+            type="button"
+            onClick={toggleSpeech}
+            className={[
+              'h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-auto md:rounded-full md:py-1.5',
+              speechStatus === 'idle'
+                ? 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800'
+                : 'border-violet-200 bg-violet-50 text-violet-800 hover:text-violet-950',
+            ].join(' ')}
+            aria-label="Lire le texte à voix haute"
+          >
+            {speechButtonLabel}
+          </button>
           <div
             className="hidden items-center justify-center rounded-full border border-stone-200 bg-stone-50 p-1 shadow-sm md:flex"
             aria-label="Réglage de la taille du texte"
@@ -1088,7 +1312,7 @@ export default function ReaderPage() {
               A−
             </button>
             <span className="px-2 font-serif text-sm text-stone-700" aria-hidden="true">
-              Options
+              Aa
             </span>
             <button
               type="button"
@@ -1113,7 +1337,7 @@ export default function ReaderPage() {
               aria-expanded={isSettingsOpen}
               aria-haspopup="menu"
             >
-              Aa
+              Options
             </button>
             {isSettingsOpen && (
               <>
@@ -1130,7 +1354,7 @@ export default function ReaderPage() {
                 <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-200 md:hidden" />
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-semibold text-stone-900">Options</p>
+                    <p className="font-semibold text-stone-900">Options de lecture</p>
                     <p className="mt-0.5 text-xs leading-relaxed text-stone-400">
                       Sauvegarde automatique.
                     </p>
@@ -1176,8 +1400,49 @@ export default function ReaderPage() {
                     </div>
                   </div>
                   <div>
+                    <p className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
+                      Lecture vocale
+                    </p>
+                    <div className="mt-2 grid grid-cols-3 gap-1 rounded-2xl border border-stone-200 bg-stone-50 p-1 text-xs font-medium shadow-sm">
+                      {[
+                        ['auto', 'Auto'],
+                        ['fr-FR', 'Français'],
+                        ['en-US', 'English'],
+                      ].map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => updateSpeechLanguageMode(value as SpeechLanguageMode)}
+                          className={[
+                            'rounded-xl px-2 py-1.5 transition-colors',
+                            speechLanguageMode === value
+                              ? 'bg-white text-violet-700 shadow-sm'
+                              : 'text-stone-500 hover:bg-white/70',
+                          ].join(' ')}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="mt-3 block text-xs font-medium text-stone-500">
+                      Vitesse : {speechRate.toFixed(1)}x
+                    </label>
+                    <input
+                      type="range"
+                      min="0.7"
+                      max="1.4"
+                      step="0.1"
+                      value={speechRate}
+                      onChange={event => updateSpeechRate(Number(event.target.value))}
+                      className="mt-2 w-full accent-violet-600"
+                    />
+                    <p className="mt-1 text-xs leading-relaxed text-stone-400">
+                      Utilise les voix installées sur l’appareil.
+                    </p>
+                  </div>
+                  <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
-                      Clé Anthropic locale
+                      Clé IA
                     </label>
                     <input
                       type="password"
@@ -1192,7 +1457,7 @@ export default function ReaderPage() {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
-                      Modèle
+                      Modèle IA
                     </label>
                     <input
                       type="text"
@@ -1261,7 +1526,7 @@ export default function ReaderPage() {
             }}
             className="flex-none rounded-full bg-white px-3 py-1.5 font-medium text-amber-900 shadow-sm transition-colors hover:bg-amber-100"
           >
-            Configurer
+            Options
           </button>
         </div>
       )}
@@ -1502,7 +1767,21 @@ export default function ReaderPage() {
                           ].join(' ')}
                         >
                           <p className="book-paragraph block w-full text-left">
-                            {item.text}
+                            {splitIntoSentences(item.text).map((sentence, sentenceIndex) => (
+                              <Fragment key={`${item.globalIndex}-${sentenceIndex}`}>
+                                <span
+                                  className={[
+                                    activeSpeechSegment?.paragraphIndex === item.globalIndex &&
+                                    activeSpeechSegment.sentenceIndex === sentenceIndex
+                                      ? 'book-sentence-speaking'
+                                      : '',
+                                  ].join(' ')}
+                                >
+                                  {sentence}
+                                </span>
+                                {' '}
+                              </Fragment>
+                            ))}
                           </p>
                           {hasExplanation && (
                             <div className="book-explained-badge">
