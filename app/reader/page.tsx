@@ -324,6 +324,10 @@ export default function ReaderPage() {
   const explanationDrawerDragStartYRef = useRef<number | null>(null);
   const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speechSegmentsRef = useRef<SpeechSegment[]>([]);
+  const speechSegmentIndexRef = useRef(0);
+  const speechGenerationRef = useRef(0);
+  const speechRateRef = useRef(DEFAULT_SPEECH_RATE);
+  const speechLanguageModeRef = useRef<SpeechLanguageMode>('auto');
 
   const rememberExplainedParagraphs = useCallback((paragraphIndexes: number[]) => {
     if (paragraphIndexes.length === 0) return;
@@ -336,9 +340,11 @@ export default function ReaderPage() {
   const stopSpeech = useCallback(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
+    speechGenerationRef.current += 1;
     window.speechSynthesis.cancel();
     speechUtteranceRef.current = null;
     speechSegmentsRef.current = [];
+    speechSegmentIndexRef.current = 0;
     setActiveSpeechSegment(null);
     setSpeechStatus('idle');
   }, []);
@@ -421,7 +427,9 @@ export default function ReaderPage() {
     try {
       const storedSpeechRate = Number(localStorage.getItem(SPEECH_RATE_STORAGE_KEY));
       if (Number.isFinite(storedSpeechRate)) {
-        setSpeechRate(clampNumber(storedSpeechRate, 0.7, 1.4));
+        const clampedRate = clampNumber(storedSpeechRate, 0.7, 1.4);
+        speechRateRef.current = clampedRate;
+        setSpeechRate(clampedRate);
       }
 
       const storedSpeechLanguage = localStorage.getItem(SPEECH_LANGUAGE_STORAGE_KEY);
@@ -430,6 +438,7 @@ export default function ReaderPage() {
         storedSpeechLanguage === 'fr-FR' ||
         storedSpeechLanguage === 'en-US'
       ) {
+        speechLanguageModeRef.current = storedSpeechLanguage;
         setSpeechLanguageMode(storedSpeechLanguage);
       }
     } catch {
@@ -482,24 +491,95 @@ export default function ReaderPage() {
     }
   }, []);
 
-  const updateSpeechRate = useCallback((nextRate: number) => {
+  const speakSpeechSegment = (segmentIndex: number) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    const segment = speechSegmentsRef.current[segmentIndex];
+    if (!segment) {
+      speechUtteranceRef.current = null;
+      setActiveSpeechSegment(null);
+      setSpeechStatus('idle');
+      return;
+    }
+
+    const speechGeneration = speechGenerationRef.current;
+    const utterance = new SpeechSynthesisUtterance(segment.text);
+    const speechLanguage = speechLanguageModeRef.current === 'auto'
+      ? detectSpeechLanguage(segment.text)
+      : speechLanguageModeRef.current;
+    const speechVoice = findSpeechVoice(speechLanguage);
+
+    speechSegmentIndexRef.current = segmentIndex;
+    utterance.lang = speechVoice?.lang ?? speechLanguage;
+    if (speechVoice) utterance.voice = speechVoice;
+    utterance.rate = speechRateRef.current;
+    utterance.onstart = () => setActiveSpeechSegment(segment);
+    utterance.onend = () => {
+      if (speechGeneration !== speechGenerationRef.current) return;
+      speakSpeechSegment(segmentIndex + 1);
+    };
+    utterance.onerror = () => {
+      if (speechGeneration !== speechGenerationRef.current) return;
+      speechUtteranceRef.current = null;
+      setActiveSpeechSegment(null);
+      setSpeechStatus('idle');
+    };
+    speechUtteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const restartCurrentSpeechSegment = (keepPaused: boolean) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+    const segment = speechSegmentsRef.current[speechSegmentIndexRef.current];
+    if (!segment) return;
+
+    speechGenerationRef.current += 1;
+    window.speechSynthesis.cancel();
+    speechUtteranceRef.current = null;
+    setActiveSpeechSegment(segment);
+
+    if (keepPaused) {
+      setSpeechStatus('paused');
+      return;
+    }
+
+    setSpeechStatus('speaking');
+    speakSpeechSegment(speechSegmentIndexRef.current);
+  };
+
+  const updateSpeechRate = (nextRate: number) => {
     const clampedRate = clampNumber(nextRate, 0.7, 1.4);
+    speechRateRef.current = clampedRate;
     setSpeechRate(clampedRate);
     try {
       localStorage.setItem(SPEECH_RATE_STORAGE_KEY, clampedRate.toString());
     } catch {
       // Speech rate still updates for the current session.
     }
-  }, []);
 
-  const updateSpeechLanguageMode = useCallback((nextMode: SpeechLanguageMode) => {
+    if (speechStatus === 'speaking') {
+      restartCurrentSpeechSegment(false);
+    } else if (speechStatus === 'paused') {
+      restartCurrentSpeechSegment(true);
+    }
+  };
+
+  const updateSpeechLanguageMode = (nextMode: SpeechLanguageMode) => {
+    speechLanguageModeRef.current = nextMode;
     setSpeechLanguageMode(nextMode);
     try {
       localStorage.setItem(SPEECH_LANGUAGE_STORAGE_KEY, nextMode);
     } catch {
       // Speech language still updates for the current session.
     }
-  }, []);
+
+    if (speechStatus === 'speaking') {
+      restartCurrentSpeechSegment(false);
+    } else if (speechStatus === 'paused') {
+      restartCurrentSpeechSegment(true);
+    }
+  };
 
   const getVisibleParagraphIndex = useCallback(() => {
     const bookPane = bookPaneRef.current;
@@ -1055,36 +1135,6 @@ export default function ReaderPage() {
     }));
   };
 
-  const speakSegment = (segmentIndex: number) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-
-    const segment = speechSegmentsRef.current[segmentIndex];
-    if (!segment) {
-      speechUtteranceRef.current = null;
-      setActiveSpeechSegment(null);
-      setSpeechStatus('idle');
-      return;
-    }
-
-    const utterance = new SpeechSynthesisUtterance(segment.text);
-    const speechLanguage = speechLanguageMode === 'auto'
-      ? detectSpeechLanguage(segment.text)
-      : speechLanguageMode;
-    const speechVoice = findSpeechVoice(speechLanguage);
-    utterance.lang = speechVoice?.lang ?? speechLanguage;
-    if (speechVoice) utterance.voice = speechVoice;
-    utterance.rate = speechRate;
-    utterance.onstart = () => setActiveSpeechSegment(segment);
-    utterance.onend = () => speakSegment(segmentIndex + 1);
-    utterance.onerror = () => {
-      speechUtteranceRef.current = null;
-      setActiveSpeechSegment(null);
-      setSpeechStatus('idle');
-    };
-    speechUtteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
-  };
-
   const toggleSpeech = () => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       setCacheClearMessage('Lecture vocale non disponible dans ce navigateur.');
@@ -1098,7 +1148,11 @@ export default function ReaderPage() {
     }
 
     if (speechStatus === 'paused') {
-      window.speechSynthesis.resume();
+      if (speechUtteranceRef.current && window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      } else {
+        speakSpeechSegment(speechSegmentIndexRef.current);
+      }
       setSpeechStatus('speaking');
       return;
     }
@@ -1107,10 +1161,12 @@ export default function ReaderPage() {
     if (segments.length === 0) return;
 
     window.speechSynthesis.cancel();
+    speechGenerationRef.current += 1;
     speechSegmentsRef.current = segments;
+    speechSegmentIndexRef.current = 0;
     setActiveSpeechSegment(null);
     setSpeechStatus('speaking');
-    speakSegment(0);
+    speakSpeechSegment(0);
   };
 
   const jumpToParagraph = (index: number) => {
