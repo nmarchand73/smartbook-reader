@@ -366,15 +366,40 @@ export default function ReaderPage() {
     }
   }, []);
 
+  const getVisibleParagraphIndex = useCallback(() => {
+    const bookPane = bookPaneRef.current;
+    if (!bookPane) return currentIndex;
+
+    const paneBounds = bookPane.getBoundingClientRect();
+    const paragraphElements = Array.from(
+      bookPane.querySelectorAll<HTMLElement>('[data-paragraph-index]')
+    );
+    const visibleParagraph = paragraphElements.find(element => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.bottom >= paneBounds.top + 96;
+    }) ?? paragraphElements[0];
+
+    const paragraphIndex = Number(visibleParagraph?.dataset.paragraphIndex);
+    return Number.isFinite(paragraphIndex) ? paragraphIndex : currentIndex;
+  }, [currentIndex]);
+
   const updateReadingMode = useCallback((nextMode: ReadingMode) => {
+    if (nextMode === readingMode) return;
+
+    const anchorIndex = readingMode === 'scroll'
+      ? getVisibleParagraphIndex()
+      : currentIndex;
+
+    navigate(anchorIndex);
     setReadingMode(nextMode);
+    setPaginationLayoutVersion(version => version + 1);
 
     try {
       localStorage.setItem(READING_MODE_STORAGE_KEY, nextMode);
     } catch {
       // Reading mode still updates for the current session.
     }
-  }, []);
+  }, [currentIndex, getVisibleParagraphIndex, navigate, readingMode]);
 
   const handleSplitResizeStart = useCallback((event: PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -766,9 +791,14 @@ export default function ReaderPage() {
     const previousReadingMode = previousReadingModeRef.current;
     previousReadingModeRef.current = readingMode;
 
-    if (readingMode !== 'scroll' || previousReadingMode === 'scroll') return;
+    if (previousReadingMode === readingMode) return;
 
     const animationFrame = requestAnimationFrame(() => {
+      if (readingMode === 'pages') {
+        bookPaneRef.current?.scrollTo({ top: 0 });
+        return;
+      }
+
       document
         .querySelector(`[data-paragraph-index="${currentIndex}"]`)
         ?.scrollIntoView({ block: 'center' });
