@@ -18,6 +18,38 @@
     @apply rounded bg-slate-200 animate-pulse-slow;
   }
 
+  .loading-shimmer {
+    background: #eee7de;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .loading-shimmer::after {
+    animation: loading-shimmer 1.35s ease-in-out infinite;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.62),
+      transparent
+    );
+    content: "";
+    inset: 0;
+    position: absolute;
+    transform: translateX(-100%);
+  }
+
+  .loading-dot {
+    animation: loading-dot 1.2s ease-in-out infinite;
+  }
+
+  .loading-dot:nth-child(2) {
+    animation-delay: 0.16s;
+  }
+
+  .loading-dot:nth-child(3) {
+    animation-delay: 0.32s;
+  }
+
   .book-page {
     --book-font-size: 16px;
     background:
@@ -85,12 +117,12 @@
   }
 
   .analysis-markdown {
-    font-size: 0.94rem;
-    line-height: 1.75;
+    font-size: 0.88rem;
+    line-height: 1.68;
   }
 
   .analysis-markdown > * + * {
-    margin-top: 0.85rem;
+    margin-top: 0.75rem;
   }
 
   .analysis-markdown h1,
@@ -102,15 +134,15 @@
   }
 
   .analysis-markdown h1 {
-    font-size: 1.2rem;
-  }
-
-  .analysis-markdown h2 {
     font-size: 1.1rem;
   }
 
-  .analysis-markdown h3 {
+  .analysis-markdown h2 {
     font-size: 1rem;
+  }
+
+  .analysis-markdown h3 {
+    font-size: 0.94rem;
   }
 
   .analysis-markdown ul,
@@ -128,6 +160,28 @@
 
   .analysis-markdown li + li {
     margin-top: 0.35rem;
+  }
+
+  .analysis-markdown a {
+    background: rgba(139, 92, 246, 0.1);
+    border-radius: 0.45rem;
+    color: #6d28d9;
+    padding: 0.05rem 0.28rem;
+    text-decoration-line: underline;
+    text-decoration-thickness: 0.08em;
+    text-underline-offset: 0.18em;
+    transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  .analysis-markdown a:hover,
+  .analysis-markdown a:focus-visible {
+    background: rgba(139, 92, 246, 0.18);
+    color: #4c1d95;
+  }
+
+  .analysis-markdown a:focus-visible {
+    outline: 2px solid rgba(124, 58, 237, 0.45);
+    outline-offset: 2px;
   }
 
   .analysis-markdown blockquote {
@@ -229,6 +283,33 @@
       right: 2rem;
       top: 2.5rem;
     }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .loading-shimmer::after,
+    .loading-dot {
+      animation: none;
+    }
+  }
+}
+
+@keyframes loading-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes loading-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-0.18rem);
   }
 }
 

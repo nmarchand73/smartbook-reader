@@ -33,6 +33,7 @@ const ANTHROPIC_API_KEY_STORAGE_KEY = 'sbr_anthropic_api_key';
 const ANTHROPIC_MODEL_STORAGE_KEY = 'sbr_anthropic_model';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
 const MAX_OUTPUT_TOKENS = 900;
+const COMMENT_DRAWER_DRAG_THRESHOLD = 40;
 
 type ReadingMode = 'pages' | 'scroll';
 interface ChapterOption {
@@ -192,13 +193,32 @@ async function fetchExplanation(
 
 function ExplanationSkeleton() {
   return (
-    <div className="space-y-3 animate-pulse" aria-label="Génération en cours…">
-      <div className="h-4 bg-slate-200 rounded w-full" />
-      <div className="h-4 bg-slate-200 rounded w-5/6" />
-      <div className="h-4 bg-slate-200 rounded w-full" />
-      <div className="h-4 bg-slate-200 rounded w-4/5" />
-      <div className="h-4 bg-slate-200 rounded w-full" />
-      <div className="h-4 bg-slate-200 rounded w-3/4" />
+    <div
+      className="rounded-2xl border border-violet-100 bg-white p-4 shadow-sm"
+      aria-busy="true"
+      aria-live="polite"
+      aria-label="Génération du commentaire en cours"
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-stone-900">Génération du commentaire</p>
+          <p className="mt-0.5 text-xs text-stone-400">Analyse du passage sélectionné</p>
+        </div>
+        <div className="flex gap-1" aria-hidden="true">
+          <span className="loading-dot h-1.5 w-1.5 rounded-full bg-violet-500" />
+          <span className="loading-dot h-1.5 w-1.5 rounded-full bg-violet-500" />
+          <span className="loading-dot h-1.5 w-1.5 rounded-full bg-violet-500" />
+        </div>
+      </div>
+      <div className="space-y-2.5" aria-hidden="true">
+        <div className="loading-shimmer h-3.5 w-full rounded-full" />
+        <div className="loading-shimmer h-3.5 w-11/12 rounded-full" />
+        <div className="loading-shimmer h-3.5 w-4/5 rounded-full" />
+      </div>
+      <div className="mt-4 space-y-2" aria-hidden="true">
+        <div className="loading-shimmer h-3 w-2/3 rounded-full" />
+        <div className="loading-shimmer h-3 w-5/6 rounded-full" />
+      </div>
     </div>
   );
 }
@@ -228,6 +248,7 @@ export default function ReaderPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
   const [isExplanationOpen, setIsExplanationOpen] = useState(false);
+  const [isExplanationExpanded, setIsExplanationExpanded] = useState(false);
   const [cacheClearMessage, setCacheClearMessage] = useState<string | null>(null);
   const [paginatedPages, setPaginatedPages] = useState<Paragraph[][]>([]);
   const [paginationLayoutVersion, setPaginationLayoutVersion] = useState(0);
@@ -238,6 +259,7 @@ export default function ReaderPage() {
   const paginationMeasureRef = useRef<HTMLDivElement | null>(null);
   const previousReadingModeRef = useRef<ReadingMode>('pages');
   const currentChapterButtonRef = useRef<HTMLButtonElement | null>(null);
+  const explanationDrawerDragStartYRef = useRef<number | null>(null);
 
   const rememberExplainedParagraphs = useCallback((paragraphIndexes: number[]) => {
     if (paragraphIndexes.length === 0) return;
@@ -587,6 +609,7 @@ export default function ReaderPage() {
     setIsLoading(false);
     setLoadError(null);
     setIsExplanationOpen(false);
+    setIsExplanationExpanded(false);
   }, []);
 
   const buildParagraphPassage = useCallback(
@@ -1056,11 +1079,33 @@ export default function ReaderPage() {
               Aa
             </button>
             {isSettingsOpen && (
-              <div
-                role="menu"
-                className="fixed inset-x-0 bottom-0 z-40 max-h-[86dvh] overflow-y-auto rounded-t-[1.75rem] border border-stone-200 bg-white p-4 text-sm shadow-2xl md:absolute md:bottom-auto md:left-auto md:right-0 md:top-auto md:mt-2 md:w-80 md:rounded-2xl md:p-3"
-              >
+              <>
+                <button
+                  type="button"
+                  aria-label="Fermer les options"
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="fixed inset-0 z-30 bg-transparent md:hidden"
+                />
+                <div
+                  role="menu"
+                  className="fixed inset-x-0 bottom-0 z-40 max-h-[86dvh] overflow-y-auto rounded-t-[1.75rem] border border-stone-200 bg-white p-4 text-sm shadow-2xl md:absolute md:bottom-auto md:left-auto md:right-0 md:top-auto md:mt-2 md:w-80 md:rounded-2xl md:p-3"
+                >
                 <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-200 md:hidden" />
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-stone-900">Options</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-stone-400">
+                      Sauvegarde automatique.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsSettingsOpen(false)}
+                    className="rounded-full bg-stone-100 px-3 py-1.5 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-200"
+                  >
+                    Terminé
+                  </button>
+                </div>
                 <div className="space-y-3 border-b border-stone-100 pb-3">
                   <div className="md:hidden">
                     <p className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
@@ -1126,6 +1171,9 @@ export default function ReaderPage() {
                   >
                   Supprimer la clé
                   </button>
+                  <p className="text-xs leading-relaxed text-stone-400">
+                    Les changements sont enregistrés dès la saisie.
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -1139,6 +1187,7 @@ export default function ReaderPage() {
                   </span>
                 </button>
               </div>
+              </>
             )}
           </div>
           <button
@@ -1201,11 +1250,31 @@ export default function ReaderPage() {
         <section
           aria-label="Commentaire IA"
           className={[
-            'reader-explanation-pane fixed inset-x-0 bottom-0 z-30 max-h-[62dvh] overflow-y-auto rounded-t-[1.35rem] border-t border-stone-200 bg-stone-100 px-3 py-2 shadow-2xl transition-transform duration-200 md:relative md:inset-auto md:z-auto md:max-h-none md:flex-none md:translate-y-0 md:rounded-none md:border-t-0 md:px-10 md:py-8 md:shadow-none',
+            'reader-explanation-pane fixed inset-x-0 bottom-0 z-30 overflow-y-auto rounded-t-[1.35rem] border-t border-stone-200 bg-stone-100 px-3 py-2 shadow-2xl transition-[max-height,transform] duration-200 md:relative md:inset-auto md:z-auto md:max-h-none md:flex-none md:translate-y-0 md:rounded-none md:border-t-0 md:px-10 md:py-8 md:shadow-none',
+            isExplanationExpanded ? 'max-h-[92dvh]' : 'max-h-[62dvh]',
             isExplanationOpen ? 'translate-y-0' : 'translate-y-full',
           ].join(' ')}
         >
-          <div className="mx-auto mb-1.5 h-1 w-10 rounded-full bg-stone-300 md:hidden" />
+          <button
+            type="button"
+            aria-label={isExplanationExpanded ? 'Réduire le commentaire' : 'Agrandir le commentaire'}
+            onClick={() => setIsExplanationExpanded(isExpanded => !isExpanded)}
+            onPointerDown={event => {
+              explanationDrawerDragStartYRef.current = event.clientY;
+            }}
+            onPointerUp={event => {
+              const startY = explanationDrawerDragStartYRef.current;
+              explanationDrawerDragStartYRef.current = null;
+              if (startY === null) return;
+
+              const deltaY = event.clientY - startY;
+              if (deltaY < -COMMENT_DRAWER_DRAG_THRESHOLD) setIsExplanationExpanded(true);
+              if (deltaY > COMMENT_DRAWER_DRAG_THRESHOLD) setIsExplanationExpanded(false);
+            }}
+            className="mx-auto mb-1.5 flex w-full touch-none justify-center py-1 md:hidden"
+          >
+            <span className="h-1 w-10 rounded-full bg-stone-300" />
+          </button>
           <div className="mx-auto max-w-prose">
             <div className="sticky -top-2 z-10 -mx-3 mb-2 flex items-center justify-between gap-3 border-b border-stone-200 bg-stone-100/95 px-3 py-2 backdrop-blur md:static md:mx-0 md:mb-5 md:border-b-0 md:bg-transparent md:p-0 md:backdrop-blur-0">
               <div className="flex items-center gap-2">
@@ -1227,6 +1296,13 @@ export default function ReaderPage() {
                 Fermer
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => setIsExplanationExpanded(isExpanded => !isExpanded)}
+              className="mb-2 w-full rounded-xl bg-white px-3 py-2 text-xs font-medium text-stone-500 shadow-sm md:hidden"
+            >
+              {isExplanationExpanded ? 'Réduire le panneau' : 'Agrandir le panneau'}
+            </button>
 
             <div className="mb-2 rounded-2xl border border-violet-100 bg-white p-3 shadow-sm md:mb-5 md:p-4">
               <div className="flex items-start justify-between gap-3">

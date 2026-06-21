@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { ParsedEpub } from '@/lib/epub-parser';
+import { getBookKeyFromEpub, saveRecentBook } from '@/lib/recent-books';
 
 interface EpubContextValue {
   epub: ParsedEpub | null;
@@ -20,8 +21,7 @@ interface EpubContextValue {
 const EpubContext = createContext<EpubContextValue | null>(null);
 
 const SESSION_KEY = 'sbr_epub_data';
-const bookKey = (epub: ParsedEpub) => `${epub.title}::${epub.author}`;
-const posKey = (epub: ParsedEpub) => `sbr_pos_${bookKey(epub)}`;
+const posKey = (epub: ParsedEpub) => `sbr_pos_${getBookKeyFromEpub(epub)}`;
 
 function getSavedPosition(epub: ParsedEpub): number {
   try {
@@ -57,12 +57,14 @@ export function EpubProvider({ children }: { children: ReactNode }) {
 
   const setEpub = useCallback((newEpub: ParsedEpub) => {
     setEpubState(newEpub);
-    setCurrentIndex(getSavedPosition(newEpub));
+    const savedPosition = getSavedPosition(newEpub);
+    setCurrentIndex(savedPosition);
     try {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(newEpub));
     } catch {
       // Storage quota exceeded — in-memory only
     }
+    saveRecentBook(newEpub, savedPosition);
   }, []);
 
   const navigate = useCallback(
@@ -72,6 +74,7 @@ export function EpubProvider({ children }: { children: ReactNode }) {
       setCurrentIndex(clamped);
       try {
         localStorage.setItem(posKey(epub), clamped.toString());
+        saveRecentBook(epub, clamped);
       } catch {}
     },
     [epub]
