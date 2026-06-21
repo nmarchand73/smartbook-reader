@@ -87,63 +87,55 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#f7f1e8] text-stone-900">
-      <header className="sticky top-0 z-20 border-b border-stone-200/70 bg-[#f7f1e8]/95 px-4 py-3 backdrop-blur sm:px-5">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-stone-200/70 sm:h-10 sm:w-10">
-            📖
+      <header className="border-b border-stone-200/70 bg-[#f7f1e8]/95 px-4 py-3 backdrop-blur sm:px-5">
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white shadow-sm ring-1 ring-stone-200/70">
+              📖
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold leading-tight sm:text-base">SmartBook Reader</p>
+              <p className="hidden text-xs text-stone-500 sm:block">Lecteur ePub local</p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm font-semibold leading-tight sm:text-base">SmartBook Reader</p>
-            <p className="hidden text-xs text-stone-500 sm:block">Lecture ePub augmentée</p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => setIsSettingsOpen(true)}
-          className="rounded-full border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 shadow-sm transition-colors hover:border-violet-200 hover:text-violet-700 sm:px-4 sm:text-sm"
-        >
-          Configurer l’IA
-        </button>
+          <button
+            type="button"
+            onClick={() => setIsSettingsOpen(true)}
+            className="flex-none rounded-full border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 shadow-sm transition-colors hover:border-violet-200 hover:text-violet-700 sm:px-4 sm:text-sm"
+          >
+            Configurer l’IA
+          </button>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:gap-8 sm:px-5 sm:py-10 lg:grid lg:min-h-[calc(100vh-4.5rem)] lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
-        <section className="space-y-4 sm:space-y-6">
-          <div className="rounded-[2rem] border border-stone-200 bg-white/90 p-4 shadow-sm sm:p-6">
+      <main className="mx-auto grid w-full max-w-5xl gap-4 px-4 py-5 sm:px-5 sm:py-8 lg:min-h-[calc(100vh-4rem)] lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+        <section className="space-y-4">
+          <div>
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-500">
-              Lecteur local
+              Lecture augmentée
             </p>
-            <h1 className="mt-3 max-w-3xl text-3xl font-semibold tracking-tight text-stone-950 sm:text-4xl md:text-5xl">
-              Ouvrir un livre
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-stone-950 sm:text-5xl">
+              Ouvrir un ePub
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-stone-600 sm:text-base">
-              Choisissez un fichier ePub. Le livre, la position de lecture et les réglages restent dans ce navigateur.
+            <p className="mt-3 max-w-xl text-sm leading-relaxed text-stone-600 sm:text-base">
+              Importez un livre, reprenez votre lecture, ajoutez des commentaires IA si vous le souhaitez.
             </p>
-            <div className="mt-4 inline-flex rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-600">
-              {anthropicApiKey.trim()
-                ? 'IA configurée'
-                : 'IA non configurée'}
-            </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-            <div className="rounded-2xl border border-stone-200 bg-white/80 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">1. Import</p>
-              <p className="mt-1 text-sm leading-relaxed text-stone-600">Ouvrez un `.epub` depuis l’appareil.</p>
-            </div>
-            <div className="rounded-2xl border border-stone-200 bg-white/80 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">2. Lecture</p>
-              <p className="mt-1 text-sm leading-relaxed text-stone-600">La dernière position est restaurée par livre.</p>
-            </div>
-            <div className="rounded-2xl border border-stone-200 bg-white/80 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">3. IA</p>
-              <p className="mt-1 text-sm leading-relaxed text-stone-600">Ajoutez la clé Anthropic dans les réglages si besoin.</p>
-            </div>
+          <div className="flex flex-wrap gap-2 text-xs font-medium text-stone-600">
+            <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm ring-1 ring-stone-200/70">
+              Fichier local
+            </span>
+            <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm ring-1 ring-stone-200/70">
+              Position sauvegardée
+            </span>
+            <span className="rounded-full bg-white/85 px-3 py-1.5 shadow-sm ring-1 ring-stone-200/70">
+              {anthropicApiKey.trim() ? 'IA prête' : 'IA à configurer'}
+            </span>
           </div>
         </section>
 
-        <section className="rounded-[2rem] border border-stone-200 bg-white p-3 shadow-2xl shadow-stone-300/40 sm:p-5">
+        <section className="rounded-[1.75rem] border border-stone-200 bg-white p-3 shadow-xl shadow-stone-300/30 sm:p-4">
           <div
             role="button"
             tabIndex={0}
@@ -154,7 +146,7 @@ export default function HomePage() {
             onDragLeave={() => setIsDragging(false)}
             onDrop={onDrop}
             className={[
-              'relative flex min-h-[20rem] cursor-pointer flex-col justify-between rounded-[1.55rem] border p-5 transition-all duration-200 sm:min-h-[24rem] sm:p-7',
+              'relative flex min-h-[16rem] cursor-pointer flex-col justify-between rounded-[1.35rem] border p-4 transition-all duration-200 sm:min-h-[20rem] sm:p-6',
               isDragging
                 ? 'border-violet-400 bg-violet-50'
                 : 'border-stone-200 bg-[#fffdf7] hover:border-violet-300',
@@ -170,7 +162,7 @@ export default function HomePage() {
             />
 
             <div className="flex items-start justify-between gap-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-3xl bg-white text-3xl shadow-sm ring-1 ring-stone-200/70">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-2xl shadow-sm ring-1 ring-stone-200/70 sm:h-14 sm:w-14 sm:text-3xl">
                 {isParsing ? '⏳' : isDragging ? '📥' : '📚'}
               </div>
               <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-stone-500 shadow-sm ring-1 ring-stone-200/70">
@@ -182,21 +174,20 @@ export default function HomePage() {
               {isParsing ? (
                 <div>
                   <div className="h-11 w-11 rounded-full border-4 border-violet-500 border-t-transparent animate-spin" />
-                  <p className="mt-5 text-xl font-semibold text-stone-900">Lecture du fichier…</p>
+                  <p className="mt-4 text-xl font-semibold text-stone-900">Lecture du fichier…</p>
                   <p className="mt-2 text-sm leading-relaxed text-stone-500">
                     Extraction des chapitres et paragraphes.
                   </p>
                 </div>
               ) : (
                 <div>
-                  <p className="text-2xl font-semibold tracking-tight text-stone-950">
+                  <p className="text-2xl font-semibold tracking-tight text-stone-950 sm:text-3xl">
                     Choisir un ePub
                   </p>
-                  <p className="mt-2 text-sm leading-relaxed text-stone-500">
-                    Sur mobile, touchez la carte pour sélectionner un fichier.
-                    Sur ordinateur, vous pouvez aussi déposer le fichier ici.
+                  <p className="mt-2 max-w-md text-sm leading-relaxed text-stone-500">
+                    Touchez pour choisir un fichier. Sur ordinateur, vous pouvez aussi le déposer ici.
                   </p>
-                  <span className="mt-5 inline-flex w-full items-center justify-center rounded-2xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 sm:w-auto">
+                  <span className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-violet-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 sm:w-auto">
                     Choisir le fichier
                   </span>
                 </div>
@@ -210,10 +201,10 @@ export default function HomePage() {
             </div>
           )}
 
-          <div className="mt-3 rounded-2xl bg-stone-50 p-3 text-sm leading-relaxed text-stone-500 sm:mt-4 sm:p-4">
+          <div className="mt-3 rounded-2xl bg-stone-50 px-3 py-2 text-xs leading-relaxed text-stone-500 sm:text-sm">
             {anthropicApiKey.trim()
               ? 'IA configurée dans ce navigateur.'
-              : 'IA non configurée : utilisez Configurer l’IA pour renseigner une clé Anthropic locale.'}
+              : 'IA non configurée. Vous pourrez lire sans commentaire IA.'}
           </div>
         </section>
       </main>

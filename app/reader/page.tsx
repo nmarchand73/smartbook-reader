@@ -38,6 +38,9 @@ type ReadingMode = 'pages' | 'scroll';
 interface ChapterOption {
   title: string;
   firstIndex: number;
+  chapterIndex: number;
+  paragraphCount: number;
+  preview: string;
 }
 interface SelectedPassage {
   text: string;
@@ -234,6 +237,7 @@ export default function ReaderPage() {
   const bookPaneRef = useRef<HTMLElement | null>(null);
   const paginationMeasureRef = useRef<HTMLDivElement | null>(null);
   const previousReadingModeRef = useRef<ReadingMode>('pages');
+  const currentChapterButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const rememberExplainedParagraphs = useCallback((paragraphIndexes: number[]) => {
     if (paragraphIndexes.length === 0) return;
@@ -788,12 +792,18 @@ export default function ReaderPage() {
   const displayedParagraphs = readingMode === 'pages' ? pageParagraphs : epub.paragraphs;
   const currentParagraph = epub.paragraphs[currentIndex];
   const chapterOptions = epub.paragraphs.reduce<ChapterOption[]>((chapters, item) => {
-    const previousChapter = chapters[chapters.length - 1];
-    if (previousChapter?.title === item.chapterTitle) return chapters;
+    const existingChapter = chapters.find(chapter => chapter.chapterIndex === item.chapterIndex);
+    if (existingChapter) {
+      existingChapter.paragraphCount += 1;
+      return chapters;
+    }
 
     chapters.push({
       title: item.chapterTitle,
       firstIndex: item.globalIndex,
+      chapterIndex: item.chapterIndex,
+      paragraphCount: 1,
+      preview: item.text,
     });
     return chapters;
   }, []);
@@ -850,7 +860,15 @@ export default function ReaderPage() {
             <button
               type="button"
               onClick={() => {
-                setIsTocOpen(isOpen => !isOpen);
+                setIsTocOpen(isOpen => {
+                  const nextIsOpen = !isOpen;
+                  if (nextIsOpen) {
+                    window.setTimeout(() => {
+                      currentChapterButtonRef.current?.scrollIntoView({ block: 'center' });
+                    }, 0);
+                  }
+                  return nextIsOpen;
+                });
                 setIsSettingsOpen(false);
               }}
               className="flex h-9 w-full min-w-0 items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-left text-xs font-medium text-stone-600 shadow-sm transition-colors hover:bg-white hover:text-stone-800 md:h-auto md:max-w-64 md:rounded-full md:py-1.5"
@@ -891,13 +909,14 @@ export default function ReaderPage() {
 
                     return (
                       <button
+                        ref={isCurrentChapter ? currentChapterButtonRef : null}
                         key={chapter.firstIndex}
                         type="button"
                         onClick={() => jumpToParagraph(chapter.firstIndex)}
                         className={[
                           'flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors',
                           isCurrentChapter
-                            ? 'bg-violet-50 text-violet-900'
+                            ? 'bg-violet-50 text-violet-900 ring-1 ring-violet-100'
                             : 'text-stone-700 hover:bg-stone-50',
                         ].join(' ')}
                       >
@@ -918,10 +937,15 @@ export default function ReaderPage() {
                           <span className="mt-0.5 block text-sm font-medium leading-snug">
                             {chapter.title}
                           </span>
-                          <span className="mt-1 block text-xs text-stone-400">
+                          <span className="mt-1 line-clamp-2 text-xs leading-relaxed text-stone-400">
+                            {chapter.preview}
+                          </span>
+                          <span className="mt-1 block text-[11px] text-stone-400">
                             {readingMode === 'pages'
                               ? `Page ${chapterPage}`
-                              : `Début au paragraphe ${chapter.firstIndex + 1}`}
+                              : `Paragraphe ${chapter.firstIndex + 1}`}
+                            {' · '}
+                            {chapter.paragraphCount} paragraphe{chapter.paragraphCount > 1 ? 's' : ''}
                           </span>
                         </span>
                       </button>

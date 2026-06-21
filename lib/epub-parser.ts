@@ -24,6 +24,23 @@ function resolvePath(base: string, relative: string): string {
   return baseDir + relative;
 }
 
+function normalizePath(path: string): string {
+  const parts: string[] = [];
+  path.split('/').forEach(part => {
+    if (!part || part === '.') return;
+    if (part === '..') {
+      parts.pop();
+      return;
+    }
+    parts.push(part);
+  });
+  return parts.join('/');
+}
+
+function pathWithoutFragment(path: string): string {
+  return path.split('#')[0];
+}
+
 function extractParagraphs(html: string): string[] {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
@@ -133,9 +150,13 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
     if (ncxContent) {
       const ncx = domParser.parseFromString(ncxContent, 'application/xml');
       ncx.querySelectorAll('navPoint').forEach(nav => {
-        const src = (nav.querySelector('content')?.getAttribute('src') ?? '').split('#')[0];
+        const src = pathWithoutFragment(nav.querySelector('content')?.getAttribute('src') ?? '');
         const label = nav.querySelector('navLabel text')?.textContent?.trim() ?? '';
-        if (src && label) tocTitles[src] = label;
+        if (src && label) {
+          const normalizedPath = normalizePath(resolvePath(ncxPath, src));
+          tocTitles[src] = label;
+          tocTitles[normalizedPath] = label;
+        }
       });
     }
   }
@@ -151,9 +172,13 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
     if (navContent) {
       const navDoc = domParser.parseFromString(navContent, 'text/html');
       navDoc.querySelectorAll('nav[epub\\:type="toc"] a, nav a').forEach(a => {
-        const href = (a.getAttribute('href') ?? '').split('#')[0];
+        const href = pathWithoutFragment(a.getAttribute('href') ?? '');
         const label = a.textContent?.trim() ?? '';
-        if (href && label) tocTitles[href] = label;
+        if (href && label) {
+          const normalizedPath = normalizePath(resolvePath(navPath, href));
+          tocTitles[href] = label;
+          tocTitles[normalizedPath] = label;
+        }
       });
     }
   }
@@ -165,13 +190,13 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
   for (let chapterIndex = 0; chapterIndex < spineItems.length; chapterIndex++) {
     const idref = spineItems[chapterIndex];
     const href = manifest[idref];
-    const fullPath = resolvePath(rootfilePath, href);
+    const fullPath = normalizePath(resolvePath(rootfilePath, href));
 
     const htmlContent = await readZipEntry(zip, fullPath) ??
                         await readZipEntry(zip, href);
     if (!htmlContent) continue;
 
-    const tocTitle = tocTitles[href] ?? '';
+    const tocTitle = tocTitles[fullPath] ?? tocTitles[href] ?? '';
     const chapterTitle = tocTitle || getChapterTitle(htmlContent, `Chapitre ${chapterIndex + 1}`);
 
     const texts = extractParagraphs(htmlContent);
