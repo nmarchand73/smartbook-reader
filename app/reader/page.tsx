@@ -7,14 +7,26 @@ import {
   Fragment,
   useCallback,
   useState,
+  type ChangeEvent as ReactChangeEvent,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent,
 } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import { useRouter } from 'next/navigation';
 import { useEpub } from '@/context/EpubContext';
-import { clearExplanationCache, getCachedExplanation, setCachedExplanation } from '@/lib/cache';
+import {
+  downloadLocalDataBackup,
+  importLocalData,
+  readBackupFile,
+} from '@/lib/backup';
+import {
+  clearExplanationCache,
+  getCachedCommentChat,
+  getCachedExplanation,
+  setCachedCommentChat,
+  setCachedExplanation,
+} from '@/lib/cache';
 import { COMMENT_CHAT_SYSTEM_PROMPT, EXPLANATION_SYSTEM_PROMPT } from '@/config/prompts';
 import type { Paragraph } from '@/lib/epub-parser';
 
@@ -73,8 +85,28 @@ interface ChatMessage {
   content: string;
 }
 
+const MARKDOWN_COMPONENTS: Components = {
+  a: props => (
+    <a
+      {...props}
+      target="_blank"
+      rel="noopener noreferrer"
+    />
+  ),
+};
+
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function readStoredNumber(storageKey: string, min: number, max: number): number | null {
+  const storedValue = localStorage.getItem(storageKey);
+  if (storedValue === null || storedValue.trim() === '') return null;
+
+  const parsedValue = Number(storedValue);
+  if (!Number.isFinite(parsedValue)) return null;
+
+  return clampNumber(parsedValue, min, max);
 }
 
 function getPageIndexForParagraph(pages: Paragraph[][], paragraphIndex: number): number {
@@ -460,12 +492,16 @@ export default function ReaderPage() {
   const [speechRate, setSpeechRate] = useState(DEFAULT_SPEECH_RATE);
   const [speechLanguageMode, setSpeechLanguageMode] = useState<SpeechLanguageMode>('auto');
   const [cacheClearMessage, setCacheClearMessage] = useState<string | null>(null);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [includeApiKeyInBackup, setIncludeApiKeyInBackup] = useState(false);
+  const [isImportingBackup, setIsImportingBackup] = useState(false);
   const [paginatedPages, setPaginatedPages] = useState<Paragraph[][]>([]);
   const [paginationLayoutVersion, setPaginationLayoutVersion] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
+  const backupInputRef = useRef<HTMLInputElement | null>(null);
   const bookPaneRef = useRef<HTMLElement | null>(null);
   const paginationMeasureRef = useRef<HTMLDivElement | null>(null);
   const previousReadingModeRef = useRef<ReadingMode>('pages');
@@ -494,6 +530,13 @@ export default function ReaderPage() {
     setChatError(null);
   }, []);
 
+  const clearSavedCommentChat = useCallback(() => {
+    if (epub && selectedPassage) {
+      setCachedCommentChat(epub.title, selectedPassage.text, []);
+    }
+    resetCommentChat();
+  }, [epub, resetCommentChat, selectedPassage]);
+
   const stopSpeech = useCallback(() => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
@@ -519,13 +562,15 @@ export default function ReaderPage() {
 
   useEffect(() => {
     try {
-      const storedFontSize = localStorage.getItem(FONT_SIZE_STORAGE_KEY);
-      if (!storedFontSize) return;
+      const storedFontSize = readStoredNumber(
+        FONT_SIZE_STORAGE_KEY,
+        MIN_BOOK_FONT_SIZE,
+        MAX_BOOK_FONT_SIZE
+      );
+      if (storedFontSize === null) return;
 
-      const parsedFontSize = Number(storedFontSize);
-      if (!Number.isFinite(parsedFontSize)) return;
-
-      setBookFontSize(clampNumber(parsedFontSize, MIN_BOOK_FONT_SIZE, MAX_BOOK_FONT_SIZE));
+      setBookFontSize(storedFontSize);
+      setPaginationLayoutVersion(version => version + 1);
     } catch {
       // Keep the default size when localStorage is unavailable.
     }
@@ -545,13 +590,15 @@ export default function ReaderPage() {
 
   useEffect(() => {
     try {
-      const storedSplitPercent = localStorage.getItem(SPLIT_STORAGE_KEY);
-      if (!storedSplitPercent) return;
+      const storedSplitPercent = readStoredNumber(
+        SPLIT_STORAGE_KEY,
+        MIN_SPLIT_PERCENT,
+        MAX_SPLIT_PERCENT
+      );
+      if (storedSplitPercent === null) return;
 
-      const parsedSplitPercent = Number(storedSplitPercent);
-      if (!Number.isFinite(parsedSplitPercent)) return;
-
-      setSplitPercent(clampNumber(parsedSplitPercent, MIN_SPLIT_PERCENT, MAX_SPLIT_PERCENT));
+      setSplitPercent(storedSplitPercent);
+      setPaginationLayoutVersion(version => version + 1);
     } catch {
       // Keep the default split when localStorage is unavailable.
     }
@@ -582,11 +629,10 @@ export default function ReaderPage() {
 
   useEffect(() => {
     try {
-      const storedSpeechRate = Number(localStorage.getItem(SPEECH_RATE_STORAGE_KEY));
-      if (Number.isFinite(storedSpeechRate)) {
-        const clampedRate = clampNumber(storedSpeechRate, 0.7, 1.4);
-        speechRateRef.current = clampedRate;
-        setSpeechRate(clampedRate);
+      const storedSpeechRate = readStoredNumber(SPEECH_RATE_STORAGE_KEY, 0.7, 1.4);
+      if (storedSpeechRate !== null) {
+        speechRateRef.current = storedSpeechRate;
+        setSpeechRate(storedSpeechRate);
       }
 
       const storedSpeechLanguage = localStorage.getItem(SPEECH_LANGUAGE_STORAGE_KEY);
@@ -774,6 +820,100 @@ export default function ReaderPage() {
     }
   }, [currentIndex, getVisibleParagraphIndex, navigate, readingMode, stopSpeech]);
 
+  const refreshSettingsFromStorage = useCallback(() => {
+    try {
+      const storedApiKey = localStorage.getItem(ANTHROPIC_API_KEY_STORAGE_KEY) ?? '';
+      const storedModel = localStorage.getItem(ANTHROPIC_MODEL_STORAGE_KEY) ?? DEFAULT_ANTHROPIC_MODEL;
+      const storedFontSize = readStoredNumber(
+        FONT_SIZE_STORAGE_KEY,
+        MIN_BOOK_FONT_SIZE,
+        MAX_BOOK_FONT_SIZE
+      );
+      const storedSplitPercent = readStoredNumber(
+        SPLIT_STORAGE_KEY,
+        MIN_SPLIT_PERCENT,
+        MAX_SPLIT_PERCENT
+      );
+      const storedSpeechRate = readStoredNumber(SPEECH_RATE_STORAGE_KEY, 0.7, 1.4);
+      const storedSpeechLanguage = localStorage.getItem(SPEECH_LANGUAGE_STORAGE_KEY);
+      const storedReadingMode = localStorage.getItem(READING_MODE_STORAGE_KEY);
+
+      setAnthropicApiKey(storedApiKey);
+      setAnthropicModel(storedModel);
+      if (storedFontSize !== null) {
+        setBookFontSize(storedFontSize);
+      }
+      if (storedSplitPercent !== null) {
+        setSplitPercent(storedSplitPercent);
+      }
+      if (storedSpeechRate !== null) {
+        speechRateRef.current = storedSpeechRate;
+        setSpeechRate(storedSpeechRate);
+      }
+      if (
+        storedSpeechLanguage === 'auto' ||
+        storedSpeechLanguage === 'fr-FR' ||
+        storedSpeechLanguage === 'en-US'
+      ) {
+        speechLanguageModeRef.current = storedSpeechLanguage;
+        setSpeechLanguageMode(storedSpeechLanguage);
+      }
+      if (storedReadingMode === 'pages' || storedReadingMode === 'scroll') {
+        setReadingMode(storedReadingMode);
+      }
+      setPaginationLayoutVersion(version => version + 1);
+    } catch {
+      // Imported data remains in storage even if live settings cannot refresh.
+    }
+  }, []);
+
+  const handleExportBackup = useCallback(() => {
+    try {
+      downloadLocalDataBackup(includeApiKeyInBackup);
+      setBackupMessage(
+        includeApiKeyInBackup
+          ? 'Sauvegarde exportée avec la clé IA.'
+          : 'Sauvegarde exportée sans la clé IA.'
+      );
+    } catch {
+      setBackupMessage('Impossible de créer la sauvegarde.');
+    }
+  }, [includeApiKeyInBackup]);
+
+  const handleBackupFileChange = useCallback(
+    async (event: ReactChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) return;
+
+      const shouldImport = window.confirm(
+        'Importer cette sauvegarde va remplacer les données SmartBook Reader correspondantes dans ce navigateur. Continuer ?'
+      );
+      if (!shouldImport) return;
+
+      setIsImportingBackup(true);
+      setBackupMessage(null);
+      try {
+        const backup = await readBackupFile(file);
+        const result = importLocalData(backup, { includeApiKey: includeApiKeyInBackup });
+        refreshSettingsFromStorage();
+        if (epub && selectedPassage) {
+          setChatMessages(getCachedCommentChat(epub.title, selectedPassage.text));
+        }
+        setBackupMessage(
+          `${result.importedCount} élément${result.importedCount > 1 ? 's' : ''} importé${result.importedCount > 1 ? 's' : ''}.` +
+          (result.skippedCount > 0 ? ` ${result.skippedCount} ignoré${result.skippedCount > 1 ? 's' : ''}.` : '') +
+          (!includeApiKeyInBackup && backup.includesApiKey ? ' Clé IA ignorée.' : '')
+        );
+      } catch (error) {
+        setBackupMessage(error instanceof Error ? error.message : 'Import impossible.');
+      } finally {
+        setIsImportingBackup(false);
+      }
+    },
+    [epub, includeApiKeyInBackup, refreshSettingsFromStorage, selectedPassage]
+  );
+
   const handleSplitResizeStart = useCallback((event: PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     setIsResizingSplit(true);
@@ -908,6 +1048,7 @@ export default function ReaderPage() {
       const cached = getCachedExplanation(epubTitle, passageText);
       if (cached) {
         setExplanation(cached);
+        setChatMessages(getCachedCommentChat(epubTitle, passageText));
         setIsLoading(false);
         setLoadError(null);
         rememberExplainedParagraphs(paragraphIndexes);
@@ -1048,6 +1189,7 @@ export default function ReaderPage() {
       const cachedExplanation = getCachedExplanation(epub.title, nextPassage.text);
       if (cachedExplanation) {
         setExplanation(cachedExplanation);
+        setChatMessages(getCachedCommentChat(epub.title, nextPassage.text));
         setExplainedParagraphIndex(nextPassage.paragraphIndex);
         rememberExplainedParagraphs(nextPassage.paragraphIndexes);
       }
@@ -1147,7 +1289,9 @@ export default function ReaderPage() {
         content: trimmedQuestion,
       };
       const previousMessages = chatMessages;
-      setChatMessages([...previousMessages, userMessage]);
+      const messagesWithQuestion = [...previousMessages, userMessage];
+      setChatMessages(messagesWithQuestion);
+      setCachedCommentChat(epub.title, selectedPassage.text, messagesWithQuestion);
       setChatInput('');
       setIsChatLoading(true);
       setChatError(null);
@@ -1173,7 +1317,9 @@ export default function ReaderPage() {
           role: 'assistant',
           content: answer,
         };
-        setChatMessages(currentMessages => [...currentMessages, assistantMessage]);
+        const nextMessages = [...messagesWithQuestion, assistantMessage];
+        setChatMessages(nextMessages);
+        setCachedCommentChat(epub.title, selectedPassage.text, nextMessages);
       } catch (e) {
         if ((e as Error).name === 'AbortError') return;
         setChatError('Impossible de répondre pour le moment. Vérifiez la connexion ou la clé IA.');
@@ -1808,7 +1954,7 @@ export default function ReaderPage() {
                 <div className="space-y-3 border-b border-stone-100 pb-3">
                   <div className="md:hidden">
                     <p className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
-                      Taille du texte
+                      Taille du texte · {bookFontSize}px
                     </p>
                     <div
                       className="mt-2 flex items-center justify-between rounded-2xl border border-stone-200 bg-stone-50 p-1 shadow-sm"
@@ -1903,6 +2049,54 @@ export default function ReaderPage() {
                       onChange={event => updateAnthropicModel(event.target.value)}
                       className="mt-1 w-full rounded-xl border border-stone-200 px-3 py-3 text-base text-stone-800 outline-none transition-colors focus:border-violet-300 md:py-2 md:text-sm"
                     />
+                  </div>
+                  <div className="rounded-2xl border border-stone-200 bg-stone-50 p-3">
+                    <p className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
+                      Sauvegarde locale
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-stone-500">
+                      Exporte ou restaure commentaires, chats, positions, dernières lectures et préférences.
+                    </p>
+                    <label className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-stone-500">
+                      <input
+                        type="checkbox"
+                        checked={includeApiKeyInBackup}
+                        onChange={event => setIncludeApiKeyInBackup(event.target.checked)}
+                        className="mt-0.5 accent-violet-600"
+                      />
+                      <span>
+                        Inclure la clé IA dans le fichier. À utiliser seulement pour une sauvegarde privée.
+                      </span>
+                    </label>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={handleExportBackup}
+                        className="rounded-full bg-white px-3 py-2 text-xs font-medium text-stone-700 shadow-sm transition-colors hover:bg-violet-50 hover:text-violet-700"
+                      >
+                        Exporter
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => backupInputRef.current?.click()}
+                        disabled={isImportingBackup}
+                        className="rounded-full bg-white px-3 py-2 text-xs font-medium text-stone-700 shadow-sm transition-colors hover:bg-violet-50 hover:text-violet-700 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {isImportingBackup ? 'Import...' : 'Importer'}
+                      </button>
+                    </div>
+                    <input
+                      ref={backupInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      onChange={handleBackupFileChange}
+                      className="hidden"
+                    />
+                    {backupMessage && (
+                      <p className="mt-2 rounded-xl bg-white px-3 py-2 text-xs leading-relaxed text-stone-500">
+                        {backupMessage}
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -2102,7 +2296,7 @@ export default function ReaderPage() {
             {explanation && (
               <>
                 <div className="analysis-markdown rounded-2xl bg-white p-4 text-stone-700 shadow-sm md:p-5">
-                  <ReactMarkdown>{explanation}</ReactMarkdown>
+                  <ReactMarkdown components={MARKDOWN_COMPONENTS}>{explanation}</ReactMarkdown>
                   {isLoading && (
                     <span className="inline-block w-0.5 h-4 ml-0.5 bg-violet-400 animate-pulse align-middle" />
                   )}
@@ -2118,7 +2312,7 @@ export default function ReaderPage() {
                     {chatMessages.length > 0 && (
                       <button
                         type="button"
-                        onClick={resetCommentChat}
+                        onClick={clearSavedCommentChat}
                         className="rounded-full px-2 py-1 text-xs font-medium text-stone-400 transition-colors hover:bg-stone-50 hover:text-stone-700"
                       >
                         Effacer
@@ -2161,7 +2355,9 @@ export default function ReaderPage() {
                           {message.role === 'user' ? (
                             <p className="font-medium">{message.content}</p>
                           ) : (
-                            <ReactMarkdown>{message.content}</ReactMarkdown>
+                            <ReactMarkdown components={MARKDOWN_COMPONENTS}>
+                              {message.content}
+                            </ReactMarkdown>
                           )}
                         </div>
                       ))}
