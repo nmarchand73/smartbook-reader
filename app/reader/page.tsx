@@ -568,6 +568,38 @@ export default function ReaderPage() {
     setCommentIndexItems(rememberCachedComment(epub.title, item));
   }, [epub]);
 
+  const loadCommentIndexItems = useCallback((): CachedCommentIndexItem[] => {
+    if (!epub) return [];
+
+    const existingItems = getCachedCommentIndex(epub.title);
+    const existingTexts = new Set(existingItems.map(item => item.text));
+    const missingParagraphItems = epub.paragraphs
+      .filter(paragraph => !existingTexts.has(paragraph.text))
+      .filter(paragraph => Boolean(getCachedExplanation(epub.title, paragraph.text)))
+      .map((paragraph): CachedCommentIndexItem => {
+        const tocTitle = [...(epub.toc ?? [])]
+          .reverse()
+          .find(item => item.firstIndex <= paragraph.globalIndex)?.title;
+
+        return {
+          paragraphIndex: paragraph.globalIndex,
+          paragraphIndexes: [paragraph.globalIndex],
+          chapterTitle: tocTitle ?? paragraph.chapterTitle,
+          excerpt: getCommentExcerpt(paragraph.text),
+          text: paragraph.text,
+          updatedAt: Date.now(),
+        };
+      });
+
+    if (missingParagraphItems.length === 0) return existingItems;
+
+    let nextItems = existingItems;
+    missingParagraphItems.forEach(item => {
+      nextItems = rememberCachedComment(epub.title, item);
+    });
+    return nextItems;
+  }, [epub]);
+
   const clearSavedCommentChat = useCallback(() => {
     if (epub && selectedPassage) {
       setCachedCommentChat(epub.title, selectedPassage.text, []);
@@ -706,8 +738,8 @@ export default function ReaderPage() {
       .map(paragraph => paragraph.globalIndex);
 
     setExplainedParagraphIndexes(cachedIndexes);
-    setCommentIndexItems(getCachedCommentIndex(epub.title));
-  }, [epub]);
+    setCommentIndexItems(loadCommentIndexItems());
+  }, [epub, loadCommentIndexItems]);
 
   const updateAnthropicApiKey = useCallback((nextApiKey: string) => {
     setAnthropicApiKey(nextApiKey);
@@ -939,6 +971,7 @@ export default function ReaderPage() {
         if (epub && selectedPassage) {
           setChatMessages(getCachedCommentChat(epub.title, selectedPassage.text));
         }
+        setCommentIndexItems(loadCommentIndexItems());
         setBackupMessage(
           `${result.importedCount} élément${result.importedCount > 1 ? 's' : ''} importé${result.importedCount > 1 ? 's' : ''}.` +
           (result.skippedCount > 0 ? ` ${result.skippedCount} ignoré${result.skippedCount > 1 ? 's' : ''}.` : '') +
@@ -950,7 +983,7 @@ export default function ReaderPage() {
         setIsImportingBackup(false);
       }
     },
-    [epub, includeApiKeyInBackup, refreshSettingsFromStorage, selectedPassage]
+    [epub, includeApiKeyInBackup, loadCommentIndexItems, refreshSettingsFromStorage, selectedPassage]
   );
 
   const handleSplitResizeStart = useCallback((event: PointerEvent<HTMLButtonElement>) => {
