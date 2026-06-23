@@ -22,10 +22,13 @@ import {
 } from '@/lib/backup';
 import {
   clearExplanationCache,
+  getCachedCommentIndex,
   getCachedCommentChat,
   getCachedExplanation,
+  rememberCachedComment,
   setCachedCommentChat,
   setCachedExplanation,
+  type CachedCommentIndexItem,
 } from '@/lib/cache';
 import { COMMENT_CHAT_SYSTEM_PROMPT, EXPLANATION_SYSTEM_PROMPT } from '@/config/prompts';
 import { APP_VERSION } from '@/config/version';
@@ -56,6 +59,7 @@ type ReadingMode = 'pages' | 'scroll';
 type SpeechStatus = 'idle' | 'speaking' | 'paused';
 type SpeechLanguageMode = 'auto' | 'fr-FR' | 'en-US';
 type ChatRole = 'user' | 'assistant';
+type NotesTab = 'search' | 'comments';
 interface ChapterOption {
   title: string;
   firstIndex: number;
@@ -259,6 +263,13 @@ function getSearchExcerpt(text: string, query: string): string {
   const suffix = start + 190 < text.length ? '…' : '';
 
   return `${prefix}${excerpt}${suffix}`;
+}
+
+function getCommentExcerpt(text: string): string {
+  const normalizedText = text.replace(/\s+/g, ' ').trim();
+  return normalizedText.length > 180
+    ? `${normalizedText.slice(0, 180).trim()}…`
+    : normalizedText;
 }
 
 // ── Streaming fetch helper ────────────────────────────────────────────────────
@@ -483,9 +494,11 @@ export default function ReaderPage() {
   const [readingMode, setReadingMode] = useState<ReadingMode>('pages');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isNotesOpen, setIsNotesOpen] = useState(false);
+  const [activeNotesTab, setActiveNotesTab] = useState<NotesTab>('search');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearchParagraphIndex, setActiveSearchParagraphIndex] = useState<number | null>(null);
+  const [commentIndexItems, setCommentIndexItems] = useState<CachedCommentIndexItem[]>([]);
   const [isExplanationOpen, setIsExplanationOpen] = useState(false);
   const [isExplanationExpanded, setIsExplanationExpanded] = useState(false);
   const [speechStatus, setSpeechStatus] = useState<SpeechStatus>('idle');
@@ -530,6 +543,30 @@ export default function ReaderPage() {
     setIsChatLoading(false);
     setChatError(null);
   }, []);
+
+  const rememberCommentIndexItem = useCallback((
+    passageText: string,
+    paragraphIndex: number | null,
+    paragraphIndexes: number[]
+  ) => {
+    if (!epub) return;
+
+    const firstParagraphIndex = paragraphIndexes[0] ?? paragraphIndex ?? 0;
+    const paragraph = epub.paragraphs[firstParagraphIndex] ?? epub.paragraphs[0];
+    const tocTitle = [...(epub.toc ?? [])]
+      .reverse()
+      .find(item => item.firstIndex <= firstParagraphIndex)?.title;
+    const item: CachedCommentIndexItem = {
+      paragraphIndex,
+      paragraphIndexes,
+      chapterTitle: tocTitle ?? paragraph?.chapterTitle ?? 'Section',
+      excerpt: getCommentExcerpt(passageText),
+      text: passageText,
+      updatedAt: Date.now(),
+    };
+
+    setCommentIndexItems(rememberCachedComment(epub.title, item));
+  }, [epub]);
 
   const clearSavedCommentChat = useCallback(() => {
     if (epub && selectedPassage) {
@@ -669,6 +706,7 @@ export default function ReaderPage() {
       .map(paragraph => paragraph.globalIndex);
 
     setExplainedParagraphIndexes(cachedIndexes);
+    setCommentIndexItems(getCachedCommentIndex(epub.title));
   }, [epub]);
 
   const updateAnthropicApiKey = useCallback((nextApiKey: string) => {
@@ -1053,6 +1091,7 @@ export default function ReaderPage() {
         setIsLoading(false);
         setLoadError(null);
         rememberExplainedParagraphs(paragraphIndexes);
+        rememberCommentIndexItem(passageText, paragraphIndex, paragraphIndexes);
         return;
       }
 
@@ -1081,6 +1120,7 @@ export default function ReaderPage() {
         );
         setCachedExplanation(epubTitle, passageText, full);
         rememberExplainedParagraphs(paragraphIndexes);
+        rememberCommentIndexItem(passageText, paragraphIndex, paragraphIndexes);
         setIsLoading(false);
       } catch (e) {
         if ((e as Error).name === 'AbortError') return;
@@ -1088,7 +1128,7 @@ export default function ReaderPage() {
         setIsLoading(false);
       }
     },
-    [anthropicApiKey, anthropicModel, rememberExplainedParagraphs]
+    [anthropicApiKey, anthropicModel, rememberCommentIndexItem, rememberExplainedParagraphs]
   );
 
   const resetExplanation = useCallback(() => {
@@ -1133,6 +1173,7 @@ export default function ReaderPage() {
     const deletedCount = clearExplanationCache();
     resetExplanation();
     setExplainedParagraphIndexes([]);
+    setCommentIndexItems([]);
     setIsSettingsOpen(false);
     setCacheClearMessage(
       deletedCount > 0
@@ -1193,6 +1234,11 @@ export default function ReaderPage() {
         setChatMessages(getCachedCommentChat(epub.title, nextPassage.text));
         setExplainedParagraphIndex(nextPassage.paragraphIndex);
         rememberExplainedParagraphs(nextPassage.paragraphIndexes);
+        rememberCommentIndexItem(
+          nextPassage.text,
+          nextPassage.paragraphIndex,
+          nextPassage.paragraphIndexes
+        );
       }
       navigate(index);
     },
@@ -1201,6 +1247,7 @@ export default function ReaderPage() {
       epub,
       navigate,
       rememberExplainedParagraphs,
+      rememberCommentIndexItem,
       resetCommentChat,
       selectedParagraphIndexes,
       selectionAnchorIndex,
@@ -1497,9 +1544,7 @@ export default function ReaderPage() {
     ? 'Pause'
     : speechStatus === 'paused'
       ? 'Reprendre'
-      : selectedPassage
-        ? 'Lire la sélection'
-        : 'Lire';
+      : 'Écouter';
 
   const buildSpeechSegments = (): SpeechSegment[] => {
     const paragraphSources = selectedPassage?.paragraphIndexes.length
@@ -1599,7 +1644,41 @@ export default function ReaderPage() {
     resetExplanation();
     stopSpeech();
     setActiveSearchParagraphIndex(paragraphIndex);
-    setIsSearchOpen(false);
+    setIsNotesOpen(false);
+    navigate(paragraphIndex);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-paragraph-index="${paragraphIndex}"]`)
+          ?.scrollIntoView({ block: 'center' });
+      });
+    });
+  };
+
+  const openCommentIndexItem = (item: CachedCommentIndexItem) => {
+    const paragraphIndex = item.paragraphIndexes[0] ?? item.paragraphIndex ?? 0;
+    const cachedExplanation = getCachedExplanation(epub.title, item.text);
+
+    stopSpeech();
+    abortRef.current?.abort();
+    setIsNotesOpen(false);
+    setIsExplanationOpen(true);
+    setSelectedPassage({
+      text: item.text,
+      label: item.paragraphIndexes.length > 1
+        ? `${item.paragraphIndexes.length} paragraphes sélectionnés`
+        : 'Paragraphe sélectionné',
+      paragraphIndex: item.paragraphIndex,
+      paragraphIndexes: item.paragraphIndexes,
+    });
+    setSelectedParagraphIndex(item.paragraphIndex);
+    setSelectedParagraphIndexes(item.paragraphIndexes);
+    setSelectionAnchorIndex(item.paragraphIndexes[item.paragraphIndexes.length - 1] ?? null);
+    setExplainedParagraphIndex(item.paragraphIndex);
+    setExplanation(cachedExplanation);
+    setChatMessages(getCachedCommentChat(epub.title, item.text));
+    setIsLoading(false);
+    setLoadError(null);
     navigate(paragraphIndex);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -1628,7 +1707,7 @@ export default function ReaderPage() {
             onClick={() => router.push('/')}
             className="flex-none rounded-full bg-stone-100 px-3 py-1.5 text-xs font-medium text-stone-600 transition-colors hover:bg-stone-200 md:hidden"
           >
-            Accueil
+            Livres
           </button>
         </div>
         <div className="mt-2 grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 md:mt-0 md:flex md:w-auto md:flex-none md:gap-3">
@@ -1646,28 +1725,28 @@ export default function ReaderPage() {
                   return nextIsOpen;
                 });
                 setIsSettingsOpen(false);
-                setIsSearchOpen(false);
+                setIsNotesOpen(false);
               }}
               className="flex h-9 w-full min-w-0 items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-left text-xs font-medium text-stone-600 shadow-sm transition-colors hover:bg-white hover:text-stone-800 md:h-auto md:max-w-64 md:rounded-full md:py-1.5"
               aria-expanded={isTocOpen}
               aria-haspopup="dialog"
             >
-              <span className="flex-none text-stone-400">Chapitres</span>
+              <span className="flex-none text-stone-400">Sommaire</span>
               <span className="truncate text-stone-800">{headerChapterLabel}</span>
             </button>
             {isTocOpen && (
               <div
                 role="dialog"
-                aria-label="Liste des chapitres"
+                aria-label="Sommaire du livre"
                 className="fixed inset-x-0 bottom-0 top-auto z-40 max-h-[82dvh] overflow-hidden rounded-t-[1.75rem] border border-stone-200 bg-white shadow-2xl md:absolute md:bottom-auto md:left-0 md:right-auto md:top-auto md:mt-2 md:max-h-none md:w-[26rem] md:rounded-2xl"
               >
                 <div className="mx-auto mt-3 h-1 w-10 rounded-full bg-stone-200 md:hidden" />
                 <div className="border-b border-stone-100 px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-stone-900">Chapitres</p>
+                      <p className="text-sm font-semibold text-stone-900">Sommaire</p>
                       <p className="text-xs text-stone-400">
-                        {chapterOptions.length} chapitre{chapterOptions.length > 1 ? 's' : ''}
+                        {chapterOptions.length} entrée{chapterOptions.length > 1 ? 's' : ''}
                       </p>
                     </div>
                     <button
@@ -1682,7 +1761,7 @@ export default function ReaderPage() {
                 <div className="max-h-[68dvh] overflow-y-auto p-2 md:max-h-[min(70vh,30rem)]">
                   {chapterOptions.length === 0 && (
                     <div className="rounded-2xl bg-stone-50 p-4 text-sm leading-relaxed text-stone-500">
-                      Aucun titre de chapitre exploitable n’a été trouvé dans cet ePub.
+                      Aucun sommaire exploitable n’a été trouvé dans cet ePub.
                     </div>
                   )}
                   {chapterOptions.map((chapter) => {
@@ -1728,7 +1807,7 @@ export default function ReaderPage() {
             <button
               type="button"
               onClick={() => {
-                setIsSearchOpen(isOpen => !isOpen);
+                setIsNotesOpen(isOpen => !isOpen);
                 setIsTocOpen(false);
                 setIsSettingsOpen(false);
               }}
@@ -1738,37 +1817,59 @@ export default function ReaderPage() {
                   ? 'border-violet-200 bg-violet-50 text-violet-800 hover:text-violet-950'
                   : 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800',
               ].join(' ')}
-              aria-expanded={isSearchOpen}
+              aria-expanded={isNotesOpen}
               aria-haspopup="dialog"
             >
-              <span className="sm:hidden">Chercher</span>
-              <span className="hidden sm:inline">Rechercher</span>
+              Notes
             </button>
-            {isSearchOpen && (
+            {isNotesOpen && (
               <div
                 role="dialog"
-                aria-label="Recherche dans le livre"
+                aria-label="Notes et recherche"
                 className="fixed inset-x-0 bottom-0 top-auto z-40 max-h-[82dvh] overflow-hidden rounded-t-[1.75rem] border border-stone-200 bg-white shadow-2xl md:absolute md:bottom-auto md:left-auto md:right-0 md:top-auto md:mt-2 md:w-[24rem] md:rounded-2xl"
               >
                 <div className="mx-auto mt-3 h-1 w-10 rounded-full bg-stone-200 md:hidden" />
                 <div className="border-b border-stone-100 px-4 py-3">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-stone-900">Rechercher</p>
+                      <p className="text-sm font-semibold text-stone-900">Notes</p>
                       <p className="text-xs text-stone-400">
-                        {normalizedSearchQuery.length >= 2
-                          ? `${searchResults.length} résultat${searchResults.length > 1 ? 's' : ''}`
-                          : 'Dans le livre en cours'}
+                        {activeNotesTab === 'comments'
+                          ? `${commentIndexItems.length} commentaire${commentIndexItems.length > 1 ? 's' : ''}`
+                          : normalizedSearchQuery.length >= 2
+                            ? `${searchResults.length} résultat${searchResults.length > 1 ? 's' : ''}`
+                            : 'Recherche dans le livre'}
                       </p>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setIsSearchOpen(false)}
+                      onClick={() => setIsNotesOpen(false)}
                       className="rounded-full px-2 py-1 text-xs font-medium text-stone-400 transition-colors hover:bg-stone-50 hover:text-stone-700"
                     >
                       Fermer
                     </button>
                   </div>
+                  <div className="mb-3 grid grid-cols-2 gap-1 rounded-2xl border border-stone-200 bg-stone-50 p-1 text-xs font-medium shadow-sm">
+                    {[
+                      ['search', 'Chercher'],
+                      ['comments', 'Commentaires'],
+                    ].map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setActiveNotesTab(value as NotesTab)}
+                        className={[
+                          'rounded-xl px-2 py-1.5 transition-colors',
+                          activeNotesTab === value
+                            ? 'bg-white text-violet-700 shadow-sm'
+                            : 'text-stone-500 hover:bg-white/70',
+                        ].join(' ')}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {activeNotesTab === 'search' && (
                   <div className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 py-2 shadow-sm">
                     <input
                       type="search"
@@ -1791,19 +1892,20 @@ export default function ReaderPage() {
                       </button>
                     )}
                   </div>
+                  )}
                 </div>
                 <div className="max-h-[58dvh] overflow-y-auto p-2 md:max-h-[min(68vh,26rem)]">
-                  {normalizedSearchQuery.length < 2 && (
+                  {activeNotesTab === 'search' && normalizedSearchQuery.length < 2 && (
                     <div className="rounded-2xl bg-stone-50 p-4 text-sm leading-relaxed text-stone-500">
                       Saisissez au moins deux caractères pour trouver un passage.
                     </div>
                   )}
-                  {normalizedSearchQuery.length >= 2 && searchResults.length === 0 && (
+                  {activeNotesTab === 'search' && normalizedSearchQuery.length >= 2 && searchResults.length === 0 && (
                     <div className="rounded-2xl bg-stone-50 p-4 text-sm leading-relaxed text-stone-500">
                       Aucun passage trouvé.
                     </div>
                   )}
-                  {visibleSearchResults.map((result, index) => (
+                  {activeNotesTab === 'search' && visibleSearchResults.map((result, index) => (
                     <button
                       key={result.paragraph.globalIndex}
                       type="button"
@@ -1828,11 +1930,48 @@ export default function ReaderPage() {
                       </span>
                     </button>
                   ))}
-                  {searchResults.length > visibleSearchResults.length && (
+                  {activeNotesTab === 'search' && searchResults.length > visibleSearchResults.length && (
                     <p className="px-3 py-2 text-xs leading-relaxed text-stone-400">
                       Affichage des 40 premiers résultats. Affinez la recherche pour réduire la liste.
                     </p>
                   )}
+                  {activeNotesTab === 'comments' && commentIndexItems.length === 0 && (
+                    <div className="rounded-2xl bg-stone-50 p-4 text-sm leading-relaxed text-stone-500">
+                      Aucun commentaire enregistré. Commentez un paragraphe pour le retrouver ici.
+                    </div>
+                  )}
+                  {activeNotesTab === 'comments' && commentIndexItems.map(item => {
+                    const firstIndex = item.paragraphIndexes[0] ?? item.paragraphIndex ?? 0;
+                    const hasChat = getCachedCommentChat(epub.title, item.text).length > 0;
+
+                    return (
+                      <button
+                        key={`${firstIndex}-${item.updatedAt}`}
+                        type="button"
+                        onClick={() => openCommentIndexItem(item)}
+                        className={[
+                          'w-full rounded-xl px-3 py-2.5 text-left transition-colors',
+                          selectedPassage?.text === item.text
+                            ? 'bg-violet-50 text-violet-900 ring-1 ring-violet-100'
+                            : 'text-stone-700 hover:bg-stone-50',
+                        ].join(' ')}
+                      >
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="truncate text-xs font-semibold text-violet-500">
+                            {item.chapterTitle}
+                          </span>
+                          {hasChat && (
+                            <span className="flex-none rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-stone-500">
+                              Chat
+                            </span>
+                          )}
+                        </span>
+                        <span className="mt-1 line-clamp-3 block text-sm leading-relaxed text-stone-600">
+                          {item.excerpt}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1875,7 +2014,7 @@ export default function ReaderPage() {
                 ? 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800'
                 : 'border-violet-200 bg-violet-50 text-violet-800 hover:text-violet-950',
             ].join(' ')}
-            aria-label="Lire le texte à voix haute"
+            aria-label="Écouter le texte à voix haute"
           >
             {speechButtonLabel}
           </button>
@@ -1911,7 +2050,7 @@ export default function ReaderPage() {
               onClick={() => {
                 setIsSettingsOpen(isOpen => !isOpen);
                 setIsTocOpen(false);
-                setIsSearchOpen(false);
+                setIsNotesOpen(false);
               }}
               className={[
                 'h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-auto md:rounded-full md:py-1.5',
@@ -1922,7 +2061,7 @@ export default function ReaderPage() {
               aria-expanded={isSettingsOpen}
               aria-haspopup="menu"
             >
-              Options
+              Réglages
             </button>
             {isSettingsOpen && (
               <>
@@ -1939,7 +2078,7 @@ export default function ReaderPage() {
                 <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-200 md:hidden" />
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-semibold text-stone-900">Options de lecture</p>
+                    <p className="font-semibold text-stone-900">Réglages de lecture</p>
                     <p className="mt-0.5 text-xs leading-relaxed text-stone-400">
                       Sauvegarde automatique · v{APP_VERSION}
                     </p>
@@ -2129,7 +2268,7 @@ export default function ReaderPage() {
             onClick={() => router.push('/')}
             className="hidden text-xs text-slate-400 transition-colors hover:text-slate-700 md:block"
           >
-            ← Accueil
+            ← Livres
           </button>
         </div>
       </header>
@@ -2156,11 +2295,11 @@ export default function ReaderPage() {
             onClick={() => {
               setIsSettingsOpen(true);
               setIsTocOpen(false);
-              setIsSearchOpen(false);
+              setIsNotesOpen(false);
             }}
             className="flex-none rounded-full bg-white px-3 py-1.5 font-medium text-amber-900 shadow-sm transition-colors hover:bg-amber-100"
           >
-            Options
+            Réglages
           </button>
         </div>
       )}

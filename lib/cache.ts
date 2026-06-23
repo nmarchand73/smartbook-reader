@@ -1,10 +1,20 @@
 const PREFIX = 'sbr_expl_';
 const CHAT_PREFIX = 'sbr_chat_';
+const COMMENT_INDEX_PREFIX = 'sbr_comment_index_';
 
 export interface CachedChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+}
+
+export interface CachedCommentIndexItem {
+  paragraphIndex: number | null;
+  paragraphIndexes: number[];
+  chapterTitle: string;
+  excerpt: string;
+  text: string;
+  updatedAt: number;
 }
 
 function hash(str: string): string {
@@ -22,6 +32,10 @@ function key(bookTitle: string, text: string): string {
 
 function chatKey(bookTitle: string, text: string): string {
   return CHAT_PREFIX + hash(bookTitle + '\x00' + text);
+}
+
+function commentIndexKey(bookTitle: string): string {
+  return COMMENT_INDEX_PREFIX + hash(bookTitle);
 }
 
 export function getCachedExplanation(bookTitle: string, text: string): string | null {
@@ -77,12 +91,60 @@ export function setCachedCommentChat(
   }
 }
 
+export function getCachedCommentIndex(bookTitle: string): CachedCommentIndexItem[] {
+  try {
+    const stored = localStorage.getItem(commentIndexKey(bookTitle));
+    if (!stored) return [];
+
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((item): item is CachedCommentIndexItem =>
+        typeof item === 'object' &&
+        item !== null &&
+        (typeof item.paragraphIndex === 'number' || item.paragraphIndex === null) &&
+        Array.isArray(item.paragraphIndexes) &&
+        item.paragraphIndexes.every((index: unknown) => typeof index === 'number') &&
+        typeof item.chapterTitle === 'string' &&
+        typeof item.excerpt === 'string' &&
+        typeof item.text === 'string' &&
+        typeof item.updatedAt === 'number'
+      )
+      .sort((a, b) => a.paragraphIndexes[0] - b.paragraphIndexes[0]);
+  } catch {
+    return [];
+  }
+}
+
+export function rememberCachedComment(
+  bookTitle: string,
+  item: CachedCommentIndexItem
+): CachedCommentIndexItem[] {
+  try {
+    const existingItems = getCachedCommentIndex(bookTitle);
+    const nextItems = [
+      item,
+      ...existingItems.filter(existingItem => existingItem.text !== item.text),
+    ].sort((a, b) => a.paragraphIndexes[0] - b.paragraphIndexes[0]);
+
+    localStorage.setItem(commentIndexKey(bookTitle), JSON.stringify(nextItems));
+    return nextItems;
+  } catch {
+    return getCachedCommentIndex(bookTitle);
+  }
+}
+
 export function clearExplanationCache(): number {
   try {
     const keysToDelete: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const storageKey = localStorage.key(i);
-      if (storageKey?.startsWith(PREFIX) || storageKey?.startsWith(CHAT_PREFIX)) {
+      if (
+        storageKey?.startsWith(PREFIX) ||
+        storageKey?.startsWith(CHAT_PREFIX) ||
+        storageKey?.startsWith(COMMENT_INDEX_PREFIX)
+      ) {
         keysToDelete.push(storageKey);
       }
     }
