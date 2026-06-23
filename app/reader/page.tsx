@@ -1243,6 +1243,7 @@ export default function ReaderPage() {
       }
 
       if (nextIndexes.length === 0) {
+        stopSpeech();
         resetExplanation();
         return;
       }
@@ -1250,6 +1251,7 @@ export default function ReaderPage() {
       const nextPassage = buildParagraphPassage(nextIndexes);
       if (!nextPassage) return;
 
+      stopSpeech();
       abortRef.current?.abort();
       resetCommentChat();
       setExplanation(null);
@@ -1284,6 +1286,7 @@ export default function ReaderPage() {
       resetCommentChat,
       selectedParagraphIndexes,
       selectionAnchorIndex,
+      stopSpeech,
     ]
   );
 
@@ -1291,6 +1294,7 @@ export default function ReaderPage() {
     (passage: SelectedPassage) => {
       if (!epub) return;
 
+      stopSpeech();
       setSelectedPassage(passage);
       setSelectedParagraphIndex(passage.paragraphIndex);
       setSelectedParagraphIndexes(passage.paragraphIndexes);
@@ -1306,7 +1310,7 @@ export default function ReaderPage() {
         passage.paragraphIndexes
       );
     },
-    [epub, loadExplanation, navigate, resetCommentChat]
+    [epub, loadExplanation, navigate, resetCommentChat, stopSpeech]
   );
 
   const explainParagraph = useCallback(
@@ -1337,6 +1341,7 @@ export default function ReaderPage() {
 
       if (!(selectionElement instanceof Element) || !bookPane.contains(selectionElement)) return;
 
+      stopSpeech();
       abortRef.current?.abort();
       resetCommentChat();
       setSelectedParagraphIndex(null);
@@ -1354,7 +1359,7 @@ export default function ReaderPage() {
       setLoadError(null);
       setIsExplanationOpen(true);
     });
-  }, [resetCommentChat]);
+  }, [resetCommentChat, stopSpeech]);
 
   const askFollowUpQuestion = useCallback(
     async (question: string) => {
