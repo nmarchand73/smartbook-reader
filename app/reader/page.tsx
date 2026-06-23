@@ -28,6 +28,7 @@ import {
   setCachedExplanation,
 } from '@/lib/cache';
 import { COMMENT_CHAT_SYSTEM_PROMPT, EXPLANATION_SYSTEM_PROMPT } from '@/config/prompts';
+import { APP_VERSION } from '@/config/version';
 import type { Paragraph } from '@/lib/epub-parser';
 
 const PARAGRAPHS_PER_PAGE = 5;
@@ -1940,7 +1941,7 @@ export default function ReaderPage() {
                   <div>
                     <p className="font-semibold text-stone-900">Options de lecture</p>
                     <p className="mt-0.5 text-xs leading-relaxed text-stone-400">
-                      Sauvegarde automatique.
+                      Sauvegarde automatique · v{APP_VERSION}
                     </p>
                   </div>
                   <button

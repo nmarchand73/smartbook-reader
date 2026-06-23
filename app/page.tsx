@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { parseEpub } from '@/lib/epub-parser';
 import { useEpub } from '@/context/EpubContext';
+import { APP_VERSION } from '@/config/version';
 import {
   getBookKeyFromEpub,
   getRecentBooks,
@@ -126,7 +127,9 @@ export default function HomePage() {
             </div>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold leading-tight sm:text-base">SmartBook Reader</p>
-              <p className="hidden text-xs text-stone-500 sm:block">Lire, annoter, reprendre</p>
+              <p className="hidden text-xs text-stone-500 sm:block">
+                Lire, annoter, reprendre · v{APP_VERSION}
+              </p>
             </div>
           </div>
           <button
