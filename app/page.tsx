@@ -123,9 +123,9 @@ export default function HomePage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#f7f1e8] text-stone-900">
+    <div className="min-h-screen overflow-x-hidden bg-[#f7f1e8] text-stone-900">
       <header className="border-b border-stone-200/70 bg-[#f7f1e8]/95 px-4 py-3 backdrop-blur sm:px-5">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3">
+        <div className="mx-auto flex w-full max-w-6xl min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-white text-xs font-bold tracking-tight text-violet-700 shadow-sm ring-1 ring-stone-200/70">
               SB
@@ -148,12 +148,12 @@ export default function HomePage() {
       </header>
 
       <main className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-5 sm:py-8">
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end">
-          <div className="max-w-3xl">
+        <section className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-end">
+          <div className="min-w-0 max-w-3xl">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-500">
               Lecture locale
             </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-stone-950 sm:text-5xl">
+            <h1 className="mt-2 break-words text-3xl font-semibold tracking-tight text-stone-950 sm:text-5xl">
               Ouvrir un ePub ou un PDF
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-stone-600 sm:text-base">
@@ -161,7 +161,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="rounded-[1.5rem] border border-stone-200 bg-white/70 p-4 text-sm leading-relaxed text-stone-500 shadow-sm">
+          <div className="min-w-0 rounded-[1.5rem] border border-stone-200 bg-white/70 p-4 text-sm leading-relaxed text-stone-500 shadow-sm">
             <p className="font-semibold text-stone-900">Vos données restent ici.</p>
             <p className="mt-1">
               Le fichier n’est pas envoyé. La clé IA est optionnelle et stockée localement.
@@ -169,8 +169,8 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:items-start">
-          <div className="rounded-[1.75rem] border border-stone-200 bg-white p-3 shadow-xl shadow-stone-300/30 sm:p-4">
+        <section className="mt-5 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:items-start">
+          <div className="min-w-0 rounded-[1.75rem] border border-stone-200 bg-white p-3 shadow-xl shadow-stone-300/30 sm:p-4">
             <div
               role="button"
               tabIndex={0}
@@ -196,11 +196,11 @@ export default function HomePage() {
                 onChange={onInputChange}
               />
 
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-xs font-bold uppercase tracking-wide text-violet-700 shadow-sm ring-1 ring-stone-200/70 sm:h-14 sm:w-14">
                   {isParsing ? '...' : isDragging ? 'Drop' : 'Doc'}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex min-w-0 flex-wrap justify-end gap-2">
                   <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-stone-500 shadow-sm ring-1 ring-stone-200/70">
                     ePub
                   </span>
@@ -259,7 +259,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="rounded-[1.75rem] border border-stone-200 bg-white/85 p-3 shadow-sm sm:p-4">
+          <div className="min-w-0 rounded-[1.75rem] border border-stone-200 bg-white/85 p-3 shadow-sm sm:p-4">
             <div className="mb-2 flex items-center justify-between gap-3 px-1">
               <div>
                 <h2 className="text-base font-semibold text-stone-900">Reprendre</h2>
@@ -293,7 +293,7 @@ export default function HomePage() {
                       }}
                       className="group w-full rounded-2xl px-3 py-3 text-left transition-colors hover:bg-stone-50"
                     >
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2 sm:flex-nowrap sm:gap-3">
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-semibold text-stone-900">{book.title}</p>
                           <p className="mt-0.5 truncate text-xs text-stone-400">
