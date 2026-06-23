@@ -15,7 +15,7 @@ import ReactMarkdown from 'react-markdown';
 import { useRouter } from 'next/navigation';
 import { useEpub } from '@/context/EpubContext';
 import { clearExplanationCache, getCachedExplanation, setCachedExplanation } from '@/lib/cache';
-import { EXPLANATION_SYSTEM_PROMPT } from '@/config/prompts';
+import { COMMENT_CHAT_SYSTEM_PROMPT, EXPLANATION_SYSTEM_PROMPT } from '@/config/prompts';
 import type { Paragraph } from '@/lib/epub-parser';
 
 const PARAGRAPHS_PER_PAGE = 5;
@@ -36,11 +36,13 @@ const SPEECH_LANGUAGE_STORAGE_KEY = 'sbr_speech_language';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_SPEECH_RATE = 0.9;
 const MAX_OUTPUT_TOKENS = 900;
+const MAX_CHAT_OUTPUT_TOKENS = 700;
 const COMMENT_DRAWER_DRAG_THRESHOLD = 40;
 
 type ReadingMode = 'pages' | 'scroll';
 type SpeechStatus = 'idle' | 'speaking' | 'paused';
 type SpeechLanguageMode = 'auto' | 'fr-FR' | 'en-US';
+type ChatRole = 'user' | 'assistant';
 interface ChapterOption {
   title: string;
   firstIndex: number;
@@ -59,6 +61,16 @@ interface SpeechSegment {
   text: string;
   paragraphIndex: number | null;
   sentenceIndex: number | null;
+}
+interface SearchResult {
+  paragraph: Paragraph;
+  chapterTitle: string;
+  excerpt: string;
+}
+interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -86,6 +98,41 @@ Utilise ce contexte pour éclairer le passage quand il est pertinent, sans plaqu
 
 ## Passage à commenter
 ${passage.slice(0, 2000)}`;
+}
+
+function buildCommentChatPrompt(options: {
+  passage: string;
+  explanation: string;
+  question: string;
+  bookTitle: string;
+  author: string;
+  messages: ChatMessage[];
+}): string {
+  const contextLines = [
+    options.bookTitle ? `- Titre du livre : ${options.bookTitle}` : null,
+    options.author ? `- Auteur : ${options.author}` : null,
+  ].filter((line): line is string => line !== null);
+  const recentMessages = options.messages.slice(-6);
+  const conversation = recentMessages.length > 0
+    ? recentMessages
+      .map(message => `${message.role === 'user' ? 'Lecteur' : 'Assistant'} : ${message.content}`)
+      .join('\n\n')
+    : 'Aucun échange précédent.';
+
+  return `## Contexte du livre
+${contextLines.length > 0 ? contextLines.join('\n') : '- Métadonnées indisponibles'}
+
+## Passage sélectionné
+${options.passage.slice(0, 2200)}
+
+## Commentaire initial
+${options.explanation.slice(0, 2400)}
+
+## Conversation récente
+${conversation}
+
+## Nouvelle question du lecteur
+${options.question.slice(0, 1000)}`;
 }
 
 function extractAnthropicText(responseBody: unknown): string {
@@ -161,6 +208,24 @@ function splitIntoSentences(text: string): string[] {
     .split(/(?<=[.!?…])\s+/)
     .map(sentence => sentence.trim())
     .filter(Boolean);
+}
+
+function normalizeSearchText(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function getSearchExcerpt(text: string, query: string): string {
+  const exactMatchIndex = text.toLowerCase().indexOf(query.toLowerCase());
+  const start = exactMatchIndex >= 0 ? Math.max(0, exactMatchIndex - 70) : 0;
+  const excerpt = text.slice(start, start + 190).trim();
+  const prefix = start > 0 ? '…' : '';
+  const suffix = start + 190 < text.length ? '…' : '';
+
+  return `${prefix}${excerpt}${suffix}`;
 }
 
 // ── Streaming fetch helper ────────────────────────────────────────────────────
@@ -247,6 +312,82 @@ async function fetchExplanation(
   return full;
 }
 
+async function fetchFollowUpAnswer(
+  params: {
+    passage: string;
+    explanation: string;
+    question: string;
+    bookTitle: string;
+    author: string;
+    messages: ChatMessage[];
+  },
+  options: {
+    apiKey: string;
+    model: string;
+  },
+  signal?: AbortSignal
+): Promise<string> {
+  if (options.apiKey.trim()) {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': options.apiKey.trim(),
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: options.model.trim() || DEFAULT_ANTHROPIC_MODEL,
+        max_tokens: MAX_CHAT_OUTPUT_TOKENS,
+        system: COMMENT_CHAT_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: buildCommentChatPrompt(params),
+          },
+        ],
+      }),
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erreur Anthropic : ${response.status}`);
+    }
+
+    const responseBody = await response.json();
+    const full = extractAnthropicText(responseBody);
+    if (!full) throw new Error('Réponse Anthropic vide.');
+    return full;
+  }
+
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...params,
+      model: options.model.trim() || DEFAULT_ANTHROPIC_MODEL,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Erreur API : ${response.status}`);
+  }
+
+  const responseBody = await response.json();
+  if (
+    typeof responseBody !== 'object' ||
+    responseBody === null ||
+    !('answer' in responseBody) ||
+    typeof responseBody.answer !== 'string' ||
+    responseBody.answer.trim().length === 0
+  ) {
+    throw new Error('Réponse vide.');
+  }
+
+  return responseBody.answer;
+}
+
 // ── Skeleton loader ───────────────────────────────────────────────────────────
 
 function ExplanationSkeleton() {
@@ -294,6 +435,10 @@ export default function ReaderPage() {
   const [selectedParagraphIndexes, setSelectedParagraphIndexes] = useState<number[]>([]);
   const [selectionAnchorIndex, setSelectionAnchorIndex] = useState<number | null>(null);
   const [selectedPassage, setSelectedPassage] = useState<SelectedPassage | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatLoading, setIsChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [bookFontSize, setBookFontSize] = useState(DEFAULT_BOOK_FONT_SIZE);
@@ -305,6 +450,9 @@ export default function ReaderPage() {
   const [readingMode, setReadingMode] = useState<ReadingMode>('pages');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTocOpen, setIsTocOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeSearchParagraphIndex, setActiveSearchParagraphIndex] = useState<number | null>(null);
   const [isExplanationOpen, setIsExplanationOpen] = useState(false);
   const [isExplanationExpanded, setIsExplanationExpanded] = useState(false);
   const [speechStatus, setSpeechStatus] = useState<SpeechStatus>('idle');
@@ -316,6 +464,7 @@ export default function ReaderPage() {
   const [paginationLayoutVersion, setPaginationLayoutVersion] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
+  const chatAbortRef = useRef<AbortController | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const bookPaneRef = useRef<HTMLElement | null>(null);
   const paginationMeasureRef = useRef<HTMLDivElement | null>(null);
@@ -335,6 +484,14 @@ export default function ReaderPage() {
     setExplainedParagraphIndexes(currentIndexes =>
       Array.from(new Set([...currentIndexes, ...paragraphIndexes])).sort((a, b) => a - b)
     );
+  }, []);
+
+  const resetCommentChat = useCallback(() => {
+    chatAbortRef.current?.abort();
+    setChatMessages([]);
+    setChatInput('');
+    setIsChatLoading(false);
+    setChatError(null);
   }, []);
 
   const stopSpeech = useCallback(() => {
@@ -794,6 +951,7 @@ export default function ReaderPage() {
 
   const resetExplanation = useCallback(() => {
     abortRef.current?.abort();
+    resetCommentChat();
     setSelectedParagraphIndex(null);
     setSelectedParagraphIndexes([]);
     setSelectionAnchorIndex(null);
@@ -804,7 +962,7 @@ export default function ReaderPage() {
     setLoadError(null);
     setIsExplanationOpen(false);
     setIsExplanationExpanded(false);
-  }, []);
+  }, [resetCommentChat]);
 
   const buildParagraphPassage = useCallback(
     (indexes: number[]): SelectedPassage | null => {
@@ -877,6 +1035,7 @@ export default function ReaderPage() {
       if (!nextPassage) return;
 
       abortRef.current?.abort();
+      resetCommentChat();
       setExplanation(null);
       setExplainedParagraphIndex(null);
       setIsLoading(false);
@@ -899,6 +1058,7 @@ export default function ReaderPage() {
       epub,
       navigate,
       rememberExplainedParagraphs,
+      resetCommentChat,
       selectedParagraphIndexes,
       selectionAnchorIndex,
     ]
@@ -913,6 +1073,7 @@ export default function ReaderPage() {
       setSelectedParagraphIndexes(passage.paragraphIndexes);
       setSelectionAnchorIndex(passage.paragraphIndexes[passage.paragraphIndexes.length - 1] ?? null);
       setIsExplanationOpen(true);
+      resetCommentChat();
       if (passage.paragraphIndex !== null) navigate(passage.paragraphIndex);
       loadExplanation(
         passage.text,
@@ -922,7 +1083,7 @@ export default function ReaderPage() {
         passage.paragraphIndexes
       );
     },
-    [epub, loadExplanation, navigate]
+    [epub, loadExplanation, navigate, resetCommentChat]
   );
 
   const explainParagraph = useCallback(
@@ -954,6 +1115,7 @@ export default function ReaderPage() {
       if (!(selectionElement instanceof Element) || !bookPane.contains(selectionElement)) return;
 
       abortRef.current?.abort();
+      resetCommentChat();
       setSelectedParagraphIndex(null);
       setSelectedParagraphIndexes([]);
       setSelectionAnchorIndex(null);
@@ -969,12 +1131,72 @@ export default function ReaderPage() {
       setLoadError(null);
       setIsExplanationOpen(true);
     });
-  }, []);
+  }, [resetCommentChat]);
+
+  const askFollowUpQuestion = useCallback(
+    async (question: string) => {
+      const trimmedQuestion = question.replace(/\s+/g, ' ').trim();
+      if (!epub || !selectedPassage || !explanation || !trimmedQuestion || isChatLoading) return;
+
+      chatAbortRef.current?.abort();
+      const controller = new AbortController();
+      chatAbortRef.current = controller;
+      const userMessage: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content: trimmedQuestion,
+      };
+      const previousMessages = chatMessages;
+      setChatMessages([...previousMessages, userMessage]);
+      setChatInput('');
+      setIsChatLoading(true);
+      setChatError(null);
+
+      try {
+        const answer = await fetchFollowUpAnswer(
+          {
+            passage: selectedPassage.text,
+            explanation,
+            question: trimmedQuestion,
+            bookTitle: epub.title,
+            author: epub.author,
+            messages: previousMessages,
+          },
+          {
+            apiKey: anthropicApiKey,
+            model: anthropicModel,
+          },
+          controller.signal
+        );
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: answer,
+        };
+        setChatMessages(currentMessages => [...currentMessages, assistantMessage]);
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return;
+        setChatError('Impossible de répondre pour le moment. Vérifiez la connexion ou la clé IA.');
+      } finally {
+        setIsChatLoading(false);
+      }
+    },
+    [
+      anthropicApiKey,
+      anthropicModel,
+      chatMessages,
+      epub,
+      explanation,
+      isChatLoading,
+      selectedPassage,
+    ]
+  );
 
   // Cancel in-flight generation when leaving the reader
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      chatAbortRef.current?.abort();
       stopSpeech();
     };
   }, [stopSpeech]);
@@ -1081,23 +1303,48 @@ export default function ReaderPage() {
   const chapterOptions = tocChapterOptions.length > 0
     ? tocChapterOptions
     : allChapterOptions.filter(chapter => !chapter.isSynthetic);
-  const currentChapterStartIndex = [...chapterOptions]
-    .reverse()
+  const reversedChapterOptions = [...chapterOptions].reverse();
+  const getChapterOptionForParagraph = (paragraphIndex: number): ChapterOption | undefined =>
+    reversedChapterOptions.find(chapter => chapter.firstIndex <= paragraphIndex);
+  const normalizedSearchQuery = normalizeSearchText(searchQuery);
+  const searchResults: SearchResult[] = normalizedSearchQuery.length >= 2
+    ? epub.paragraphs
+      .filter(paragraph => normalizeSearchText(paragraph.text).includes(normalizedSearchQuery))
+      .map(paragraph => ({
+        paragraph,
+        chapterTitle: getChapterOptionForParagraph(paragraph.globalIndex)?.title ?? paragraph.chapterTitle,
+        excerpt: getSearchExcerpt(paragraph.text, searchQuery.trim()),
+      }))
+    : [];
+  const visibleSearchResults = searchResults.slice(0, 40);
+  const currentChapterStartIndex = reversedChapterOptions
     .find(chapter => chapter.firstIndex <= currentIndex)?.firstIndex ??
     [...allChapterOptions]
       .reverse()
       .find(chapter => chapter.firstIndex <= currentIndex)?.firstIndex ??
     allChapterOptions[0]?.firstIndex ??
     0;
+  const currentChapterOption =
+    chapterOptions.find(chapter => chapter.firstIndex === currentChapterStartIndex) ??
+    allChapterOptions.find(chapter => chapter.firstIndex === currentChapterStartIndex);
   const totalPages = pages.length;
   const isFirst = currentPage === 0;
   const isLast = currentPage === totalPages - 1;
   const canNavigatePages = readingMode === 'pages' && totalPages > 0;
-  const pageChapterTitles = Array.from(new Set(pageParagraphs.map(item => item.chapterTitle)));
+  const pageChapterTitles = Array.from(
+    new Set(
+      pageParagraphs.map(item =>
+        getChapterOptionForParagraph(item.globalIndex)?.title ??
+        item.chapterTitle
+      )
+    )
+  );
   const chapterLabel = pageChapterTitles.length > 1
     ? `${pageChapterTitles[0]} - ${pageChapterTitles[pageChapterTitles.length - 1]}`
     : pageChapterTitles[0];
-  const headerChapterLabel = readingMode === 'pages' ? chapterLabel : currentParagraph?.chapterTitle;
+  const headerChapterLabel = readingMode === 'pages'
+    ? chapterLabel
+    : currentChapterOption?.title ?? currentParagraph?.chapterTitle;
   const bookHeaderLabel = readingMode === 'pages' ? chapterLabel : null;
   const speechButtonLabel = speechStatus === 'speaking'
     ? 'Pause'
@@ -1199,6 +1446,23 @@ export default function ReaderPage() {
     });
   };
 
+  const goToSearchResult = (result: SearchResult) => {
+    const paragraphIndex = result.paragraph.globalIndex;
+
+    resetExplanation();
+    stopSpeech();
+    setActiveSearchParagraphIndex(paragraphIndex);
+    setIsSearchOpen(false);
+    navigate(paragraphIndex);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-paragraph-index="${paragraphIndex}"]`)
+          ?.scrollIntoView({ block: 'center' });
+      });
+    });
+  };
+
   return (
     <div className="flex flex-col h-screen bg-stone-50 overflow-hidden">
       {/* ── Header ── */}
@@ -1220,8 +1484,8 @@ export default function ReaderPage() {
             Accueil
           </button>
         </div>
-        <div className="mt-2 flex w-full items-center gap-2 md:mt-0 md:w-auto md:flex-none md:gap-3">
-          <div className="relative min-w-0 flex-1">
+        <div className="mt-2 grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 md:mt-0 md:flex md:w-auto md:flex-none md:gap-3">
+          <div className="relative order-1 min-w-0 md:order-none md:flex-1">
             <button
               type="button"
               onClick={() => {
@@ -1235,12 +1499,13 @@ export default function ReaderPage() {
                   return nextIsOpen;
                 });
                 setIsSettingsOpen(false);
+                setIsSearchOpen(false);
               }}
               className="flex h-9 w-full min-w-0 items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-left text-xs font-medium text-stone-600 shadow-sm transition-colors hover:bg-white hover:text-stone-800 md:h-auto md:max-w-64 md:rounded-full md:py-1.5"
               aria-expanded={isTocOpen}
               aria-haspopup="dialog"
             >
-              <span className="text-stone-400">Chapitres</span>
+              <span className="flex-none text-stone-400">Chapitres</span>
               <span className="truncate text-stone-800">{headerChapterLabel}</span>
             </button>
             {isTocOpen && (
@@ -1312,15 +1577,128 @@ export default function ReaderPage() {
               </div>
             )}
           </div>
+          <div className="relative order-2 flex-none md:order-none">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchOpen(isOpen => !isOpen);
+                setIsTocOpen(false);
+                setIsSettingsOpen(false);
+              }}
+              className={[
+                'h-9 rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-auto md:rounded-full md:py-1.5',
+                searchQuery.trim()
+                  ? 'border-violet-200 bg-violet-50 text-violet-800 hover:text-violet-950'
+                  : 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800',
+              ].join(' ')}
+              aria-expanded={isSearchOpen}
+              aria-haspopup="dialog"
+            >
+              <span className="sm:hidden">Chercher</span>
+              <span className="hidden sm:inline">Rechercher</span>
+            </button>
+            {isSearchOpen && (
+              <div
+                role="dialog"
+                aria-label="Recherche dans le livre"
+                className="fixed inset-x-0 bottom-0 top-auto z-40 max-h-[82dvh] overflow-hidden rounded-t-[1.75rem] border border-stone-200 bg-white shadow-2xl md:absolute md:bottom-auto md:left-auto md:right-0 md:top-auto md:mt-2 md:w-[24rem] md:rounded-2xl"
+              >
+                <div className="mx-auto mt-3 h-1 w-10 rounded-full bg-stone-200 md:hidden" />
+                <div className="border-b border-stone-100 px-4 py-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-stone-900">Rechercher</p>
+                      <p className="text-xs text-stone-400">
+                        {normalizedSearchQuery.length >= 2
+                          ? `${searchResults.length} résultat${searchResults.length > 1 ? 's' : ''}`
+                          : 'Dans le livre en cours'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsSearchOpen(false)}
+                      className="rounded-full px-2 py-1 text-xs font-medium text-stone-400 transition-colors hover:bg-stone-50 hover:text-stone-700"
+                    >
+                      Fermer
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 py-2 shadow-sm">
+                    <input
+                      type="search"
+                      autoFocus
+                      value={searchQuery}
+                      onChange={event => setSearchQuery(event.target.value)}
+                      placeholder="Mot, phrase, nom..."
+                      className="min-w-0 flex-1 bg-transparent text-sm text-stone-800 outline-none placeholder:text-stone-400"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery('');
+                          setActiveSearchParagraphIndex(null);
+                        }}
+                        className="rounded-full px-2 py-1 text-xs font-medium text-stone-400 transition-colors hover:bg-white hover:text-stone-700"
+                      >
+                        Effacer
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="max-h-[58dvh] overflow-y-auto p-2 md:max-h-[min(68vh,26rem)]">
+                  {normalizedSearchQuery.length < 2 && (
+                    <div className="rounded-2xl bg-stone-50 p-4 text-sm leading-relaxed text-stone-500">
+                      Saisissez au moins deux caractères pour trouver un passage.
+                    </div>
+                  )}
+                  {normalizedSearchQuery.length >= 2 && searchResults.length === 0 && (
+                    <div className="rounded-2xl bg-stone-50 p-4 text-sm leading-relaxed text-stone-500">
+                      Aucun passage trouvé.
+                    </div>
+                  )}
+                  {visibleSearchResults.map((result, index) => (
+                    <button
+                      key={result.paragraph.globalIndex}
+                      type="button"
+                      onClick={() => goToSearchResult(result)}
+                      className={[
+                        'w-full rounded-xl px-3 py-2.5 text-left transition-colors',
+                        activeSearchParagraphIndex === result.paragraph.globalIndex
+                          ? 'bg-violet-50 text-violet-900 ring-1 ring-violet-100'
+                          : 'text-stone-700 hover:bg-stone-50',
+                      ].join(' ')}
+                    >
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="truncate text-xs font-semibold text-violet-500">
+                          {result.chapterTitle}
+                        </span>
+                        <span className="flex-none text-[11px] text-stone-400">
+                          #{index + 1}
+                        </span>
+                      </span>
+                      <span className="mt-1 line-clamp-3 block text-sm leading-relaxed text-stone-600">
+                        {result.excerpt}
+                      </span>
+                    </button>
+                  ))}
+                  {searchResults.length > visibleSearchResults.length && (
+                    <p className="px-3 py-2 text-xs leading-relaxed text-stone-400">
+                      Affichage des 40 premiers résultats. Affinez la recherche pour réduire la liste.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <div
-            className="flex h-9 flex-none items-center rounded-2xl border border-stone-200 bg-stone-50 p-1 text-xs font-medium shadow-sm md:h-auto md:rounded-full"
+            className="order-4 col-span-2 flex h-9 items-center rounded-2xl border border-stone-200 bg-stone-50 p-1 text-xs font-medium shadow-sm md:order-none md:col-span-1 md:flex-none md:rounded-full"
             aria-label="Mode de lecture"
           >
             <button
               type="button"
               onClick={() => updateReadingMode('pages')}
               className={[
-                'rounded-xl px-3 py-1.5 transition-colors md:rounded-full md:py-1',
+                'flex-1 rounded-xl px-3 py-1.5 transition-colors md:flex-none md:rounded-full md:py-1',
                 readingMode === 'pages'
                   ? 'bg-white text-violet-700 shadow-sm'
                   : 'text-stone-500 hover:bg-white/70',
@@ -1332,7 +1710,7 @@ export default function ReaderPage() {
               type="button"
               onClick={() => updateReadingMode('scroll')}
               className={[
-                'rounded-xl px-3 py-1.5 transition-colors md:rounded-full md:py-1',
+                'flex-1 rounded-xl px-3 py-1.5 transition-colors md:flex-none md:rounded-full md:py-1',
                 readingMode === 'scroll'
                   ? 'bg-white text-violet-700 shadow-sm'
                   : 'text-stone-500 hover:bg-white/70',
@@ -1345,7 +1723,7 @@ export default function ReaderPage() {
             type="button"
             onClick={toggleSpeech}
             className={[
-              'h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-auto md:rounded-full md:py-1.5',
+              'order-5 h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:order-none md:h-auto md:rounded-full md:py-1.5',
               speechStatus === 'idle'
                 ? 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800'
                 : 'border-violet-200 bg-violet-50 text-violet-800 hover:text-violet-950',
@@ -1355,7 +1733,7 @@ export default function ReaderPage() {
             {speechButtonLabel}
           </button>
           <div
-            className="hidden items-center justify-center rounded-full border border-stone-200 bg-stone-50 p-1 shadow-sm md:flex"
+            className="hidden items-center justify-center rounded-full border border-stone-200 bg-stone-50 p-1 shadow-sm md:order-none md:flex"
             aria-label="Réglage de la taille du texte"
           >
             <button
@@ -1380,10 +1758,14 @@ export default function ReaderPage() {
               A+
             </button>
           </div>
-          <div className="relative">
+          <div className="relative order-3 md:order-none">
             <button
               type="button"
-              onClick={() => setIsSettingsOpen(isOpen => !isOpen)}
+              onClick={() => {
+                setIsSettingsOpen(isOpen => !isOpen);
+                setIsTocOpen(false);
+                setIsSearchOpen(false);
+              }}
               className={[
                 'h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-auto md:rounded-full md:py-1.5',
                 anthropicApiKey.trim()
@@ -1579,6 +1961,7 @@ export default function ReaderPage() {
             onClick={() => {
               setIsSettingsOpen(true);
               setIsTocOpen(false);
+              setIsSearchOpen(false);
             }}
             className="flex-none rounded-full bg-white px-3 py-1.5 font-medium text-amber-900 shadow-sm transition-colors hover:bg-amber-100"
           >
@@ -1717,12 +2100,116 @@ export default function ReaderPage() {
             )}
 
             {explanation && (
-              <div className="analysis-markdown rounded-2xl bg-white p-4 text-stone-700 shadow-sm md:p-5">
-                <ReactMarkdown>{explanation}</ReactMarkdown>
-                {isLoading && (
-                  <span className="inline-block w-0.5 h-4 ml-0.5 bg-violet-400 animate-pulse align-middle" />
-                )}
-              </div>
+              <>
+                <div className="analysis-markdown rounded-2xl bg-white p-4 text-stone-700 shadow-sm md:p-5">
+                  <ReactMarkdown>{explanation}</ReactMarkdown>
+                  {isLoading && (
+                    <span className="inline-block w-0.5 h-4 ml-0.5 bg-violet-400 animate-pulse align-middle" />
+                  )}
+                </div>
+                <div className="mt-3 rounded-2xl border border-stone-200 bg-white p-3 shadow-sm md:mt-4 md:p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-stone-900">Approfondir</h3>
+                      <p className="mt-0.5 text-xs leading-relaxed text-stone-400">
+                        Posez une question sur ce commentaire.
+                      </p>
+                    </div>
+                    {chatMessages.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={resetCommentChat}
+                        className="rounded-full px-2 py-1 text-xs font-medium text-stone-400 transition-colors hover:bg-stone-50 hover:text-stone-700"
+                      >
+                        Effacer
+                      </button>
+                    )}
+                  </div>
+
+                  {chatMessages.length === 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {[
+                        'Explique plus simplement',
+                        'Donne le contexte',
+                        'Pourquoi c’est important ?',
+                      ].map(suggestion => (
+                        <button
+                          key={suggestion}
+                          type="button"
+                          onClick={() => askFollowUpQuestion(suggestion)}
+                          disabled={isChatLoading}
+                          className="rounded-full bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-500 transition-colors hover:bg-violet-50 hover:text-violet-700 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {chatMessages.length > 0 && (
+                    <div className="mt-3 space-y-2.5">
+                      {chatMessages.map(message => (
+                        <div
+                          key={message.id}
+                          className={[
+                            'rounded-2xl px-3 py-2 text-sm leading-relaxed',
+                            message.role === 'user'
+                              ? 'bg-violet-50 text-violet-950'
+                              : 'analysis-markdown bg-stone-50 text-stone-700',
+                          ].join(' ')}
+                        >
+                          {message.role === 'user' ? (
+                            <p className="font-medium">{message.content}</p>
+                          ) : (
+                            <ReactMarkdown>{message.content}</ReactMarkdown>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {isChatLoading && (
+                    <div
+                      className="mt-3 flex items-center gap-2 rounded-2xl bg-stone-50 px-3 py-2 text-xs font-medium text-stone-400"
+                      aria-live="polite"
+                    >
+                      <span>Réponse en cours</span>
+                      <span className="loading-dot h-1.5 w-1.5 rounded-full bg-violet-500" />
+                      <span className="loading-dot h-1.5 w-1.5 rounded-full bg-violet-500" />
+                      <span className="loading-dot h-1.5 w-1.5 rounded-full bg-violet-500" />
+                    </div>
+                  )}
+
+                  {chatError && (
+                    <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-600">
+                      {chatError}
+                    </p>
+                  )}
+
+                  <form
+                    className="mt-3 flex items-end gap-2 rounded-2xl border border-stone-200 bg-stone-50 p-2 shadow-sm"
+                    onSubmit={event => {
+                      event.preventDefault();
+                      askFollowUpQuestion(chatInput);
+                    }}
+                  >
+                    <textarea
+                      value={chatInput}
+                      onChange={event => setChatInput(event.target.value)}
+                      placeholder="Poser une question sur ce commentaire..."
+                      rows={1}
+                      className="max-h-28 min-h-9 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-relaxed text-stone-800 outline-none placeholder:text-stone-400"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!chatInput.trim() || isChatLoading}
+                      className="flex-none rounded-full bg-violet-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-stone-300"
+                    >
+                      Envoyer
+                    </button>
+                  </form>
+                </div>
+              </>
             )}
 
             {!isLoading && !loadError && !explanation && (
@@ -1778,11 +2265,18 @@ export default function ReaderPage() {
                 <div className="space-y-0">
                   {displayedParagraphs.map((item, index) => {
                     const isSelected = selectedParagraphIndexes.includes(item.globalIndex);
+                    const isSearchActive = activeSearchParagraphIndex === item.globalIndex;
                     const isExplaining = isLoading && explainedParagraphIndex === item.globalIndex;
                     const hasExplanation = explainedParagraphIndexes.includes(item.globalIndex);
                     const previousParagraph = displayedParagraphs[index - 1];
+                    const itemChapterTitle =
+                      getChapterOptionForParagraph(item.globalIndex)?.title ?? item.chapterTitle;
+                    const previousChapterTitle = previousParagraph
+                      ? getChapterOptionForParagraph(previousParagraph.globalIndex)?.title ??
+                        previousParagraph.chapterTitle
+                      : null;
                     const shouldShowChapterSeparator =
-                      readingMode === 'scroll' && item.chapterTitle !== previousParagraph?.chapterTitle;
+                      readingMode === 'scroll' && itemChapterTitle !== previousChapterTitle;
 
                     return (
                       <Fragment key={item.globalIndex}>
@@ -1790,7 +2284,7 @@ export default function ReaderPage() {
                           <div className="my-10 flex items-center gap-4 first:mt-0">
                             <div className="h-px flex-1 bg-stone-200" />
                             <p className="max-w-[70%] text-center text-[11px] font-medium uppercase tracking-[0.3em] text-stone-400">
-                              {item.chapterTitle}
+                              {itemChapterTitle}
                             </p>
                             <div className="h-px flex-1 bg-stone-200" />
                           </div>
@@ -1816,6 +2310,9 @@ export default function ReaderPage() {
                             'book-paragraph-block relative rounded-lg px-0 py-2 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-300 md:px-4',
                             isSelected
                               ? 'book-paragraph-active'
+                              : '',
+                            isSearchActive
+                              ? 'ring-2 ring-amber-200 bg-amber-50/45'
                               : '',
                             hasExplanation
                               ? 'book-paragraph-explained'
