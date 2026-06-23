@@ -7,6 +7,7 @@ export interface Paragraph {
   chapterIndex: number;
   indexInChapter: number;
   globalIndex: number;
+  pageNumber?: number;
 }
 
 export interface EpubTocItem {
@@ -16,6 +17,7 @@ export interface EpubTocItem {
 }
 
 export interface ParsedEpub {
+  sourceType?: 'epub' | 'pdf';
   title: string;
   author: string;
   paragraphs: Paragraph[];
@@ -279,5 +281,5 @@ export async function parseEpub(file: File): Promise<ParsedEpub> {
     }))
     .filter((item): item is EpubTocItem => Number.isFinite(item.firstIndex));
 
-  return { title, author, paragraphs, toc };
+  return { sourceType: 'epub', title, author, paragraphs, toc };
 }

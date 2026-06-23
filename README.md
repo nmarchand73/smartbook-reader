@@ -1,10 +1,10 @@
 # SmartBook Reader
 
-SmartBook Reader is a French-first ePub reader with optional AI comments. It is designed for local reading: the book is parsed in the browser, the reading position is saved locally, and comments are generated only when requested.
+SmartBook Reader is a French-first ePub and PDF reader with optional AI comments. It is designed for local reading: the book is parsed in the browser, the reading position is saved locally, and comments are generated only when requested.
 
 ## What It Does
 
-- Opens `.epub` files directly in the browser.
+- Opens `.epub` and text-based `.pdf` files directly in the browser.
 - Restores the current position per book.
 - Shows recent books with progress and last-read information.
 - Supports two reading modes: `Pages` and `Continu`.
@@ -52,7 +52,7 @@ Run the development server:
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), select an `.epub`, and start reading.
+Open [http://localhost:3000](http://localhost:3000), select an `.epub` or text-based `.pdf`, and start reading.
 
 ## Available Scripts
 
@@ -94,7 +94,7 @@ Because GitHub Pages is static, server routes are not available there. AI commen
 
 ## How It Works
 
-The home page accepts an `.epub` file and parses it in the browser with `JSZip`. The parser reads `META-INF/container.xml`, locates the OPF package file, follows the spine reading order, resolves table-of-contents titles, and turns readable HTML blocks into paragraph records.
+The home page accepts `.epub` and text-based `.pdf` files. ePubs are parsed in the browser with `JSZip`: the parser reads `META-INF/container.xml`, locates the OPF package file, follows the spine reading order, resolves table-of-contents titles, and turns readable HTML blocks into paragraph records. PDFs are parsed in the browser with `pdf.js`, then converted into page-based text chunks.
 
 Parsed book data is stored in React context and mirrored to `sessionStorage` so refreshes can restore the loaded book while the session is still available.
 
@@ -117,6 +117,7 @@ context/
 lib/
   cache.ts                   Local AI comment cache helpers
   epub-parser.ts             Client-side ePub parsing
+  pdf-parser.ts              Client-side PDF text extraction
   recent-books.ts            Recent-reading metadata in localStorage
 ```
 
@@ -124,7 +125,7 @@ lib/
 
 SmartBook Reader stores convenience data in the browser:
 
-- `sessionStorage`: currently loaded parsed ePub.
+- `sessionStorage`: currently loaded parsed book.
 - `localStorage`: reading positions, recent books, settings, cache, AI key and model.
 
-Browsers cannot usually reopen a local file automatically after the session is gone. If the parsed book is no longer in `sessionStorage`, the home page asks the reader to reimport the same ePub.
+Browsers cannot usually reopen a local file automatically after the session is gone. If the parsed book is no longer in `sessionStorage`, the home page asks the reader to reimport the same file.

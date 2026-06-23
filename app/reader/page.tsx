@@ -41,8 +41,8 @@ const MIN_BOOK_FONT_SIZE = 8;
 const MAX_BOOK_FONT_SIZE = 24;
 const BOOK_FONT_SIZE_STEP = 1;
 const SPLIT_STORAGE_KEY = 'sbr_reader_split_percent';
-const DEFAULT_SPLIT_PERCENT = 42;
-const MIN_SPLIT_PERCENT = 28;
+const DEFAULT_SPLIT_PERCENT = 30;
+const MIN_SPLIT_PERCENT = 24;
 const MAX_SPLIT_PERCENT = 64;
 const READING_MODE_STORAGE_KEY = 'sbr_reader_mode';
 const ANTHROPIC_API_KEY_STORAGE_KEY = 'sbr_anthropic_api_key';
@@ -1723,16 +1723,18 @@ export default function ReaderPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-stone-50 overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden bg-stone-50">
       {/* ── Header ── */}
-      <header className="flex-none border-b border-stone-200 bg-white px-3 py-2 shadow-sm md:flex md:items-center md:justify-between md:px-5 md:py-3">
+      <header className="flex-none border-b border-stone-200 bg-white px-3 py-2 shadow-sm md:flex md:items-center md:justify-between md:px-4">
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="text-base md:text-lg">📖</span>
+            <span className="flex h-7 w-7 flex-none items-center justify-center rounded-xl bg-stone-50 text-[10px] font-bold uppercase tracking-tight text-violet-700 ring-1 ring-stone-200">
+              SB
+            </span>
             <div className="min-w-0">
               <h1 className="truncate text-sm font-semibold leading-tight text-stone-900 md:text-base">
-              {epub.title}
-            </h1>
+                {epub.title}
+              </h1>
               <p className="hidden truncate text-[11px] text-stone-400 sm:block md:text-xs">{epub.author}</p>
             </div>
           </div>
@@ -1743,7 +1745,7 @@ export default function ReaderPage() {
             Livres
           </button>
         </div>
-        <div className="mt-2 grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 md:mt-0 md:flex md:w-auto md:flex-none md:gap-3">
+        <div className="mt-2 grid w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 md:mt-0 md:flex md:w-auto md:flex-none md:gap-2">
           <div className="relative order-1 min-w-0 md:order-none md:flex-1">
             <button
               type="button"
@@ -1760,7 +1762,7 @@ export default function ReaderPage() {
                 setIsSettingsOpen(false);
                 setIsNotesOpen(false);
               }}
-              className="flex h-9 w-full min-w-0 items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-left text-xs font-medium text-stone-600 shadow-sm transition-colors hover:bg-white hover:text-stone-800 md:h-auto md:max-w-64 md:rounded-full md:py-1.5"
+              className="flex h-9 w-full min-w-0 items-center gap-2 rounded-2xl border border-stone-200 bg-stone-50 px-3 text-left text-xs font-medium text-stone-600 shadow-sm transition-colors hover:bg-white hover:text-stone-800 md:h-8 md:max-w-56 md:rounded-full"
               aria-expanded={isTocOpen}
               aria-haspopup="dialog"
             >
@@ -1845,7 +1847,7 @@ export default function ReaderPage() {
                 setIsSettingsOpen(false);
               }}
               className={[
-                'h-9 rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-auto md:rounded-full md:py-1.5',
+                'h-9 rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-8 md:rounded-full',
                 searchQuery.trim()
                   ? 'border-violet-200 bg-violet-50 text-violet-800 hover:text-violet-950'
                   : 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800',
@@ -2042,7 +2044,7 @@ export default function ReaderPage() {
             type="button"
             onClick={toggleSpeech}
             className={[
-              'order-5 h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:order-none md:h-auto md:rounded-full md:py-1.5',
+              'order-5 h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:order-none md:h-8 md:rounded-full',
               speechStatus === 'idle'
                 ? 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800'
                 : 'border-violet-200 bg-violet-50 text-violet-800 hover:text-violet-950',
@@ -2052,7 +2054,7 @@ export default function ReaderPage() {
             {speechButtonLabel}
           </button>
           <div
-            className="hidden items-center justify-center rounded-full border border-stone-200 bg-stone-50 p-1 shadow-sm md:order-none md:flex"
+            className="hidden items-center justify-center rounded-full border border-stone-200 bg-stone-50 p-1 shadow-sm md:order-none xl:flex"
             aria-label="Réglage de la taille du texte"
           >
             <button
@@ -2086,7 +2088,7 @@ export default function ReaderPage() {
                 setIsNotesOpen(false);
               }}
               className={[
-                'h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-auto md:rounded-full md:py-1.5',
+                'h-9 flex-none rounded-2xl border px-3 text-xs font-medium shadow-sm transition-colors hover:bg-white md:h-8 md:rounded-full',
                 anthropicApiKey.trim()
                   ? 'border-stone-200 bg-stone-50 text-stone-600 hover:text-stone-800'
                   : 'border-amber-200 bg-amber-50 text-amber-800 hover:text-amber-950',
@@ -2125,7 +2127,7 @@ export default function ReaderPage() {
                   </button>
                 </div>
                 <div className="space-y-3 border-b border-stone-100 pb-3">
-                  <div className="md:hidden">
+                  <div>
                     <p className="block text-xs font-semibold uppercase tracking-wide text-stone-400">
                       Taille du texte · {bookFontSize}px
                     </p>
@@ -2308,7 +2310,7 @@ export default function ReaderPage() {
 
       {/* ── Chapter label ── */}
       {headerChapterLabel && (
-        <div className="hidden flex-none border-b border-stone-200 bg-stone-100 px-5 py-2 text-xs font-medium uppercase tracking-wide text-stone-500 md:block">
+        <div className="flex flex-none border-b border-stone-200 bg-stone-100 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone-500 md:hidden">
           {headerChapterLabel}
         </div>
       )}
@@ -2358,7 +2360,7 @@ export default function ReaderPage() {
         <section
           aria-label="Commentaire IA"
           className={[
-            'reader-explanation-pane fixed inset-x-0 bottom-0 z-30 overflow-y-auto rounded-t-[1.35rem] border-t border-stone-200 bg-stone-100 px-3 py-2 shadow-2xl transition-[max-height,transform] duration-200 md:relative md:inset-auto md:z-auto md:max-h-none md:flex-none md:translate-y-0 md:rounded-none md:border-t-0 md:px-10 md:py-8 md:shadow-none',
+            'reader-explanation-pane fixed inset-x-0 bottom-0 z-30 overflow-y-auto rounded-t-[1.35rem] border-t border-stone-200 bg-stone-100 px-3 py-2 shadow-2xl transition-[max-height,transform] duration-200 md:relative md:inset-auto md:z-auto md:max-h-none md:flex-none md:translate-y-0 md:rounded-none md:border-t-0 md:px-5 md:py-6 md:shadow-none',
             isExplanationExpanded ? 'max-h-[92dvh]' : 'max-h-[62dvh]',
             isExplanationOpen ? 'translate-y-0' : 'translate-y-full',
           ].join(' ')}
@@ -2386,7 +2388,9 @@ export default function ReaderPage() {
           <div className="mx-auto max-w-prose">
             <div className="sticky -top-2 z-10 -mx-3 mb-2 flex items-center justify-between gap-3 border-b border-stone-200 bg-stone-100/95 px-3 py-2 backdrop-blur md:static md:mx-0 md:mb-5 md:border-b-0 md:bg-transparent md:p-0 md:backdrop-blur-0">
               <div className="flex items-center gap-2">
-                <span className="text-sm text-violet-500 md:text-lg">✨</span>
+                <span className="hidden h-6 w-6 items-center justify-center rounded-full bg-violet-50 text-[10px] font-bold uppercase text-violet-600 md:flex">
+                  IA
+                </span>
                 <div>
                   <h2 className="text-sm font-semibold leading-tight text-stone-900 md:text-xs md:uppercase md:tracking-widest md:text-violet-500">
                     Commentaire
@@ -2412,13 +2416,13 @@ export default function ReaderPage() {
               {isExplanationExpanded ? 'Réduire le panneau' : 'Agrandir le panneau'}
             </button>
 
-            <div className="mb-2 rounded-2xl border border-violet-100 bg-white p-3 shadow-sm md:mb-5 md:p-4">
+            <div className="mb-2 rounded-2xl border border-violet-100 bg-white p-3 shadow-sm md:mb-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="hidden text-xs font-semibold uppercase tracking-widest text-violet-500 md:block">
                     {selectedPassage?.label ?? 'Sélection'}
                   </p>
-                  <p className="line-clamp-1 font-serif text-sm leading-relaxed text-stone-600 md:mt-2 md:line-clamp-4">
+                  <p className="line-clamp-1 font-serif text-sm leading-relaxed text-stone-600 md:mt-2 md:line-clamp-3">
                     {selectedPassage?.text ?? 'Sélectionnez un passage du livre.'}
                   </p>
                 </div>
@@ -2447,7 +2451,7 @@ export default function ReaderPage() {
                 </button>
               ) : (
                 <p className="mt-2 rounded-xl bg-stone-50 px-3 py-2 text-xs leading-relaxed text-stone-500">
-                  Touchez un paragraphe, ou sélectionnez quelques lignes.
+                  Cliquez un paragraphe pour le commenter.
                 </p>
               )}
             </div>
@@ -2582,8 +2586,8 @@ export default function ReaderPage() {
             )}
 
             {!isLoading && !loadError && !explanation && (
-              <div className="hidden rounded-xl border border-dashed border-stone-200 bg-white/70 p-3 text-sm leading-relaxed text-stone-500 md:block md:p-5">
-                Astuce : Cmd/Ctrl+clic ajoute un paragraphe, Shift+clic sélectionne une plage.
+              <div className="hidden rounded-2xl border border-dashed border-stone-200 bg-white/70 p-3 text-xs leading-relaxed text-stone-400 md:block">
+                Cmd/Ctrl+clic ajoute un paragraphe. Shift+clic sélectionne une plage.
               </div>
             )}
           </div>
@@ -2616,12 +2620,12 @@ export default function ReaderPage() {
           onScroll={updateCurrentParagraphFromScroll}
           onMouseUp={captureTextSelection}
           onTouchEnd={captureTextSelection}
-          className="reader-book-pane relative h-full overflow-y-auto bg-[#fffdf7] px-0 py-0 md:flex-none md:bg-stone-200/70 md:px-8 md:py-10"
+          className="reader-book-pane relative h-full overflow-y-auto bg-[#fffdf7] px-0 py-0 md:flex-none md:bg-stone-200/70 md:px-6 md:py-8"
         >
-          <div className="mx-auto max-w-3xl md:h-auto">
+          <div className="mx-auto max-w-4xl md:h-auto">
             {displayedParagraphs.length > 0 ? (
               <div
-                className="book-page min-h-full rounded-none px-5 py-6 md:rounded-sm md:px-16 md:py-16"
+                className="book-page min-h-full rounded-none px-5 py-6 md:rounded-sm md:px-20 md:py-14"
                 style={{ '--book-font-size': `${bookFontSize}px` } as CSSProperties}
               >
                 {bookHeaderLabel && (
@@ -2740,10 +2744,10 @@ export default function ReaderPage() {
           <div
             ref={paginationMeasureRef}
             aria-hidden="true"
-            className="pagination-measure mx-auto max-w-3xl"
+            className="pagination-measure mx-auto max-w-4xl"
           >
             <div
-              className="book-page min-h-full rounded-sm px-8 py-10 md:px-16 md:py-16"
+              className="book-page min-h-full rounded-sm px-8 py-10 md:px-20 md:py-14"
               style={{ '--book-font-size': `${bookFontSize}px` } as CSSProperties}
             >
               <div className="mb-10 border-b border-stone-200 pb-4 text-center">
