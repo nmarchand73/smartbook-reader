@@ -15,6 +15,7 @@ import {
 const ANTHROPIC_API_KEY_STORAGE_KEY = 'sbr_anthropic_api_key';
 const ANTHROPIC_MODEL_STORAGE_KEY = 'sbr_anthropic_model';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6';
+const SOURCE_URL_PARAM = 'url';
 
 function getProgressPercent(book: RecentBook): number {
   if (book.paragraphCount <= 1) return 0;
@@ -46,6 +47,7 @@ export default function HomePage() {
   const [anthropicModel, setAnthropicModel] = useState(DEFAULT_ANTHROPIC_MODEL);
   const [recentBooks, setRecentBooks] = useState<RecentBook[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const importedUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     try {
@@ -103,6 +105,43 @@ export default function HomePage() {
     },
     [setEpub, router]
   );
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedSourceUrl = params.get(SOURCE_URL_PARAM)?.trim();
+    if (!requestedSourceUrl || importedUrlRef.current === requestedSourceUrl) return;
+
+    const sourceUrl = requestedSourceUrl;
+    importedUrlRef.current = sourceUrl;
+
+    async function importFromUrl() {
+      setError(null);
+      setIsParsing(true);
+
+      try {
+        const response = await fetch(sourceUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const urlPath = new URL(sourceUrl, window.location.href).pathname;
+        const fileName = decodeURIComponent(urlPath.split('/').pop() || 'document.epub');
+        const file = new File([blob], fileName, {
+          type: blob.type || (fileName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/epub+zip'),
+        });
+
+        await handleFile(file);
+      } catch {
+        setError(
+          'Impossible de charger ce document depuis son URL. Ouvrez le fichier manuellement, ou servez le catalogue avec une URL accessible au navigateur.'
+        );
+        setIsParsing(false);
+      }
+    }
+
+    void importFromUrl();
+  }, [handleFile]);
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
