@@ -8,6 +8,7 @@ export interface Paragraph {
   indexInChapter: number;
   globalIndex: number;
   pageNumber?: number;
+  isHeading?: boolean;
 }
 
 export interface EpubTocItem {

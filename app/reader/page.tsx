@@ -2697,7 +2697,12 @@ export default function ReaderPage() {
                               : '',
                           ].join(' ')}
                         >
-                          <p className="book-paragraph block w-full text-left">
+                          <p
+                            className={[
+                              'book-paragraph block w-full text-left',
+                              item.isHeading ? 'book-paragraph-heading' : '',
+                            ].join(' ')}
+                          >
                             {splitIntoSentences(item.text).map((sentence, sentenceIndex) => (
                               <Fragment key={`${item.globalIndex}-${sentenceIndex}`}>
                                 <span
@@ -2767,7 +2772,12 @@ export default function ReaderPage() {
                     data-measure-paragraph-index={item.globalIndex}
                     className="book-paragraph-block relative rounded-lg px-4 py-2"
                   >
-                    <div className="book-paragraph block w-full text-left">
+                    <div
+                      className={[
+                        'book-paragraph block w-full text-left',
+                        item.isHeading ? 'book-paragraph-heading' : '',
+                      ].join(' ')}
+                    >
                       {item.text}
                     </div>
                   </article>
